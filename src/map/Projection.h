@@ -22,10 +22,16 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <cstdio>
 //#define ACCEPT_USE_OF_DEPRECATED_PROJ_API_H
 
-#ifdef ACCEPT_USE_OF_DEPRECATED_PROJ_API_H
-#include "proj_api.h"
-#else
-#include "proj.h"
+// Под Android PROJ не собирается намеренно: он тянет SQLite и базу
+// координатных систем ради того, что там не нужно. Проекции, которым он
+// нужен, в такой сборке просто отсутствуют — остаются Projection_ZYGRIB
+// и Projection_MERCATOR_Simple, обе на собственной арифметике.
+#ifndef MAKGRIB_NO_PROJ
+  #ifdef ACCEPT_USE_OF_DEPRECATED_PROJ_API_H
+  #include "proj_api.h"
+  #else
+  #include "proj.h"
+  #endif
 #endif
 
 class Projection : public QObject
@@ -158,6 +164,7 @@ class Projection_MERCATOR_Simple : public Projection
 		static double yToLat (double y);
 		static const double LAT_LIMIT;   // 85 градусов
 };
+#ifndef MAKGRIB_NO_PROJ
 
 //=========================================================
 class Projection_libproj : public Projection
@@ -231,6 +238,8 @@ class Projection_MILLER : public Projection_libproj
         		{ return new Projection_MILLER(*this); }
 };
 
+
+#endif  // MAKGRIB_NO_PROJ
 
 #endif
 
