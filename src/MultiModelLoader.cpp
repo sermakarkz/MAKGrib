@@ -29,7 +29,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <QTimer>
 
 #include "MultiModelLoader.h"
-#include "NomadsLoader.h"
+#include "DialogForecastProgress.h"
+#include "SourceRegistry.h"
 #include "Util.h"
 #include "Version.h"
 
@@ -332,26 +333,28 @@ MultiModelLoader::Result MultiModelLoader::fetch (
 	// The OpenGribs server has been down for days at a time (issue #326).
 	// NOAA keeps publishing GFS and its wave model regardless, so for those
 	// two the forecast can still be built, straight from NOMADS.
-	if (url.isEmpty() && NomadsLoader::covers (m.code)) {
-		NomadsDialogProgress bar (progress,
+	ForecastSource *alt = SourceRegistry::instance().sourceFor (m.code);
+	if (url.isEmpty() && alt != nullptr) {
+		DialogForecastProgress bar (progress,
 		        (progress != nullptr) ? progress->value() : 0, m.label);
-		NomadsLoader::Outcome n = NomadsLoader::fetch (
-		        m.code, x0, y0, x1, y1, days, interval, destDir,
+		ForecastSource::Request rq {m.code, x0, y0, x1, y1, days, interval};
+		QString gotPath;
+		ForecastSource::Result n = alt->fetchToFile (rq, destDir, &gotPath,
 		        (progress != nullptr) ? &bar : nullptr);
 		if (n.ok) {
 			r.ok       = true;
-			r.fileName = n.path;
+			r.fileName = gotPath;
 			r.hours    = n.hours;
 			r.days     = n.hours/24;
 			// The server's own words are already on the lines of the models
 			// that have no NOAA counterpart; here only the source matters.
-			r.note = tr("from NOAA NOMADS, run %1 — the OpenGribs server "
-			            "did not deliver").arg (n.run);
+			r.note = tr("from %1, run %2 — the OpenGribs server did not "
+			            "deliver").arg (alt->name()).arg (n.run);
 			if (n.truncated)
 				r.note += "\n   " + n.error;
 			return r;
 		}
-		r.note = error + " / " + tr("NOAA") + ": " + n.error;
+		r.note = error + " / " + alt->name() + ": " + n.error;
 		return r;
 	}
 

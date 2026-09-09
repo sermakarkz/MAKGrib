@@ -26,7 +26,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <cmath>
 
 #include "FileLoaderGRIB.h"
-#include "NomadsLoader.h"
+#include "SourceRegistry.h"
 #include "Util.h"
 #include "Version.h"
 
@@ -461,7 +461,7 @@ void FileLoaderGRIB::slotFinished_step2 ()
 //-------------------------------------------------------------------------------
 // Reports the download to the dialog that owns this loader.
 namespace {
-class GribDialogProgress : public NomadsProgress
+class GribDialogProgress : public ForecastProgress
 {
 	public:
 		explicit GribDialogProgress (FileLoaderGRIB *o) : owner (o) {}
@@ -492,10 +492,13 @@ void FileLoaderGRIB::nomadsStep (int done, int total, qint64 bytes)
 //-------------------------------------------------------------------------------
 bool FileLoaderGRIB::tryNomads (const QString &serverMessage)
 {
+	SourceRegistry &reg = SourceRegistry::instance ();
 	bool wantAtm  = (!reqAtmCode.isEmpty()  && reqAtmCode  != "none");
 	bool wantWave = (!reqWaveCode.isEmpty() && reqWaveCode != "none");
-	bool canAtm   = wantAtm  && NomadsLoader::covers (reqAtmCode);
-	bool canWave  = wantWave && NomadsLoader::covers (reqWaveCode);
+	ForecastSource *srcAtm  = wantAtm  ? reg.sourceFor (reqAtmCode)  : nullptr;
+	ForecastSource *srcWave = wantWave ? reg.sourceFor (reqWaveCode) : nullptr;
+	bool canAtm   = (srcAtm  != nullptr);
+	bool canWave  = (srcWave != nullptr);
 
 	if (!canAtm && !canWave)
 		return false;              // nothing here NOAA could stand in for
@@ -521,9 +524,9 @@ bool FileLoaderGRIB::tryNomads (const QString &serverMessage)
 	QString name, usedRun;
 
 	if (canAtm) {
-		NomadsLoader::Outcome o = NomadsLoader::fetchInto (&arrayContent,
-		        reqAtmCode, reqX0, reqY0, reqX1, reqY1,
-		        reqDays, reqInterval, &bar);
+		ForecastSource::Request rq {reqAtmCode, reqX0, reqY0, reqX1, reqY1,
+		                            reqDays, reqInterval};
+		ForecastSource::Result o = srcAtm->fetch (rq, &arrayContent, &bar);
 		if (!o.ok) {
 			emit signalGribLoadError (serverMessage + "\n\nNOAA: " + o.error);
 			downloadError = true;
@@ -538,9 +541,9 @@ bool FileLoaderGRIB::tryNomads (const QString &serverMessage)
 	if (canWave) {
 		// Appended to the same buffer: a GRIB file is its messages end to
 		// end, so atmosphere and waves travel together as one file.
-		NomadsLoader::Outcome o = NomadsLoader::fetchInto (&arrayContent,
-		        reqWaveCode, reqX0, reqY0, reqX1, reqY1,
-		        reqDays, reqInterval, &bar);
+		ForecastSource::Request rq {reqWaveCode, reqX0, reqY0, reqX1, reqY1,
+		                            reqDays, reqInterval};
+		ForecastSource::Result o = srcWave->fetch (rq, &arrayContent, &bar);
 		if (!o.ok) {
 			if (!canAtm) {
 				emit signalGribLoadError (serverMessage + "\n\nNOAA: " + o.error);

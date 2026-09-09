@@ -39,38 +39,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "Util.h"
 #include "WinHttpFetch.h"
 
-//---------------------------------------------------------------------
-NomadsDialogProgress::NomadsDialogProgress (QProgressDialog *dialog,
-                                            int baseValue,
-                                            const QString &label)
-	: dlg (dialog), base (baseValue), name (label)
-{
-}
-void NomadsDialogProgress::message (const QString &text)
-{
-	if (dlg != nullptr) {
-		dlg->setLabelText (name.isEmpty() ? text : name + " — " + text);
-		QApplication::processEvents ();
-	}
-}
-void NomadsDialogProgress::step (int done, int total, qint64 bytes)
-{
-	if (dlg == nullptr || total <= 0)
-		return;
-	dlg->setValue (base + (100*done)/total);
-	// The megabytes matter: a deep pull is dozens of separate requests,
-	// and without them a slow one cannot be told from a program that has
-	// stopped responding.
-	dlg->setLabelText (QString("%1 %2  %3 MB")
-	        .arg (QObject::tr("Downloading from NOAA")).arg (name)
-	        .arg (bytes/(1024.0*1024.0), 0, 'f', 1));
-	QApplication::processEvents ();
-}
-bool NomadsDialogProgress::canceled ()
-{
-	return dlg != nullptr && dlg->wasCanceled ();
-}
-
 static const char *NOMADS_CGI = "https://nomads.ncep.noaa.gov/cgi-bin/";
 
 // The fields XyGrib asks the OpenGribs server for, named the way NOAA's
