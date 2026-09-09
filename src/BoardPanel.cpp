@@ -540,7 +540,7 @@ void BoardPanel::mouseReleaseEvent (QMouseEvent *e)
 			menuPopup->exec(QCursor::pos());
             break;
         case Qt::LeftButton :
-        case Qt::MidButton :
+        case Qt::MiddleButton :
             break;
         default :
             break;

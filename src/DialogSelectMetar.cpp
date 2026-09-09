@@ -16,6 +16,7 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ***********************************************************************/
 
+#include <algorithm>
 #include <QApplication>
 #include <QMessageBox>
 #include <QScrollBar>
@@ -62,8 +63,9 @@ DialogSelectMetar::DialogSelectMetar (QWidget *parent) : DialogBoxBase (parent)
     //----------------------------------------------------------
 	int treeoffset = Util::getSetting ("metar_tree_offset", 0).toInt();
 	treeWidget->verticalScrollBar()->setSliderPosition (treeoffset);
-	QDesktopWidget *wscr = QApplication::desktop ();
-	QRect r = wscr->availableGeometry();
+	// QDesktopWidget убрали в Qt 6; QScreen даёт то же самое и в Qt 5.
+	QScreen *scr = QGuiApplication::primaryScreen ();
+	QRect r = (scr != nullptr) ? scr->availableGeometry() : QRect(0,0,1024,768);
 	this->setMinimumWidth  (qMin(400,r.width()));
 	this->setMinimumHeight (qMin(800,r.height()));
 }
@@ -118,7 +120,7 @@ void DialogSelectMetar::make_metar_tree ()
 			(Util::getSetting("metar_selected", QStringList()).toStringList() );
 			 		 
 	allAirports = factory.mapAirports.values ();
-	qSort (allAirports);	// sort by country/state/name
+	std::sort (allAirports.begin(), allAirports.end());	// sort by country/state/name
 	
 	treeWidget = new QTreeWidget ();
 	treeWidget->setColumnCount (2);

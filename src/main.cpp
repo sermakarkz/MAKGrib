@@ -17,7 +17,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ***********************************************************************/
 
 #include <QApplication>
-#include <QTextCodec>
+#include <QGuiApplication>
+#include <QScreen>
 #include <QTranslator>
 #include <QTime>
 #include <QMessageBox>
@@ -259,7 +260,9 @@ int main (int argc, char *argv[])
 	assert (win);
 	//-----------------------------------------------------
 	if (shiftsWindow) {
-		QRect rsz = QApplication::desktop()->screenGeometry ();
+		// QApplication::desktop() убрали в Qt 6; QScreen работает в обеих.
+		QScreen *scr = QGuiApplication::primaryScreen ();
+		QRect rsz = (scr != nullptr) ? scr->geometry() : QRect(0,0,1024,768);
 		int ws = rsz.width ();
 		int hs = rsz.height ();
 		int x = win->x ();

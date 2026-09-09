@@ -1,4 +1,6 @@
 
+#include <QRegularExpression>
+
 #include "SkewT.h"
 
 //------------------------------------------------------
@@ -115,9 +117,10 @@ void SkewT::setConvectiveBase (const QString& cbase)
 	}
 	else if (cbase.startsWith ("surface-")) 
 	{ // format "surface-50"
-		QRegExp reg ("surface-(\\d+)");
-		if (reg.indexIn (cbase) != -1) {
-			p2 = reg.cap(1);
+		QRegularExpression reg ("surface-(\\d+)");
+		QRegularExpressionMatch mt = reg.match (cbase);
+		if (mt.hasMatch()) {
+			p2 = mt.captured(1);
 			hmax = surfaceHpa;
 			hmin = surfaceHpa - p2.toDouble (&ok);
 			if (ok) {
@@ -128,10 +131,11 @@ void SkewT::setConvectiveBase (const QString& cbase)
 		}
 	}
 	else { // format "1000-950"
-		QRegExp reg ("(\\d+)-(\\d+)");
-		if (reg.indexIn (cbase) != -1) {
-			p1 = reg.cap(1);
-			p2 = reg.cap(2);
+		QRegularExpression reg ("(\\d+)-(\\d+)");
+		QRegularExpressionMatch mt = reg.match (cbase);
+		if (mt.hasMatch()) {
+			p1 = mt.captured(1);
+			p2 = mt.captured(2);
 			hmax = p1.toDouble (&ok);
 			if (ok) {
 				hmin = p2.toDouble (&ok);
