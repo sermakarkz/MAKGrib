@@ -45,6 +45,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "DialogFonts.h"
 #include "GriddedPlotter.h"
 #include "SkewT.h"
+#include "DialogVirtualBoat.h"
 
 
 
@@ -64,7 +65,16 @@ class MainWindow: public QMainWindow
         MainWindow (int w, int h, QWidget *parent = 0);
         ~MainWindow();
 
-        void openMeteoDataFile (const QString& fileName);
+        // automatic=true for the file reopened at start-up: a forecast
+        // that has already expired is dropped silently instead of being
+        // put on screen as if it were current.
+        void openMeteoDataFile (const QString& fileName, bool automatic=false);
+        // Adds a forecast without unloading the ones already open.
+        void addMeteoDataFile (const QString& fileName);
+
+        // True when the last step of the loaded forecast is already in
+        // the past. *last receives that step.
+        bool forecastHasExpired (time_t *last) const;
 		
 		void openSkewtDiagramWindow (double lon, double lat, 
 									 GriddedReader *reader = NULL, 
@@ -86,7 +96,29 @@ public slots:
         void slotMETARsListChanged ();
 		void slotMETARSvisibility (bool vis);
 		void slotShowSkewtDiagram ();
-		
+
+		//-- several forecasts loaded at once ----------------
+		void slotFile_AddGRIB ();
+		void slotFile_DownloadAllModels ();
+		void slotModel_Selected (int index);
+		void slotModel_Next ();
+		void slotModel_Prev ();
+		void slotModel_Close ();
+		void slotModel_Shortcut ();
+		void slotModelListChanged ();
+
+		//-- virtual boat ------------------------------------
+		void slotBoat_Draw ();
+		void slotBoat_DrawingChanged (bool finished);
+		void slotBoat_Edit ();
+		void slotBoat_Track ();
+		void slotBoat_Show ();
+		void slotBoat_Clear ();
+		void slotBoat_SetStartHere ();
+		void slotBoat_InsertWaypoint ();
+		void slotBoat_DeleteWaypoint ();
+		void slotBoat_Changed ();
+
         void slotFile_Open ();
         void slotFile_Close ();
         void slotFile_Load_GRIB ();
@@ -175,6 +207,10 @@ public slots:
         Terrain      *terre;
         MenuBar      *menuBar;
         QToolBar     *toolBar;
+        // Second row: the forecast slots and the boat. They were on the
+        // one row with everything else, which overflowed on any window
+        // narrower than about 1600 px and hid them behind the ">>".
+        QToolBar     *toolBarBoat;
         BoardPanel   *boardPanel;
         QStatusBar   *statusBar;
 		DateChooser  *dateChooser;
@@ -188,7 +224,12 @@ public slots:
 
 
         QMenu    *menuPopupBtRight;
-        
+
+        BoatTrackWindow *boatTrackWindow;
+        // Widgets put on a toolbar are shown/hidden through the action
+        // the toolbar creates for them, not through the widget itself.
+        QAction *actModelsCombo;
+
         void    connectSignals();
 		void    createPOIs ();
 		void    connectPOI (POI *poi);
@@ -197,6 +238,9 @@ public slots:
 		
         void    disableMenubarItems();
         void    setMenubarItems();
+        // Everything the window must refresh when the shown forecast
+        // changes: menus, date list, date chooser, colour scale, map.
+        void    applyLoadedModel (const QString &fileName);
 
         void    InitActionsStatus();
 		void 	setMenubarColorMapData (const DataCode &dtc, bool trigAction=true);

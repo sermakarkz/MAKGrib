@@ -90,6 +90,15 @@ class Util : public QObject
     static QString pathTr  (QString lang)   {return pathData()+"data/tr/xyGrib_"+lang;}
 	static QString getServerName ();
 
+	// Подсистема шифрования поднимается лениво, при первом запросе по
+	// https, и на Windows это может занять много времени, а под Wine не
+	// заканчивается вовсе. Происходит это в потоке интерфейса, и окно
+	// замирает целиком. Поэтому поднимаем её заранее и в стороне.
+	static void  startSslWarmup ();
+	// Ждёт готовности не дольше waitMs, не блокируя перерисовку окна.
+	// false — шифрование недоступно или не успело подняться.
+	static bool  sslReady (int waitMs);
+
     static void     setSettings (const QHash <QString, QVariant> &h);
     static void     setSetting (const QString &key, const QVariant &value, bool sync = true);
     static QVariant getSetting (const QString &key, const QVariant &defaultValue);

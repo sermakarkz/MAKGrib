@@ -32,6 +32,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <QProcess>
 
 #include "MainWindow.h"
+#include "MultiModelLoader.h"
 #include "MeteoTable.h"
 #include "POI_Editor.h"
 #include "Font.h"
@@ -248,6 +249,32 @@ void MainWindow::connectSignals()
     connect(mb->ac_ExportImage, SIGNAL(triggered()), this, SLOT(slotExportImage()));
     connect(mb->ac_showSkewtDiagram, SIGNAL(triggered()), this, SLOT(slotShowSkewtDiagram()));
 
+    //-- virtual boat ---------------------------------------
+    connect(mb->acBoat_Draw,  SIGNAL(triggered()), this, SLOT(slotBoat_Draw()));
+    connect(terre, SIGNAL(routeDrawingChanged(bool)),
+            this, SLOT(slotBoat_DrawingChanged(bool)));
+    connect(mb->acBoat_Edit,  SIGNAL(triggered()), this, SLOT(slotBoat_Edit()));
+    connect(mb->acBoat_Track, SIGNAL(triggered()), this, SLOT(slotBoat_Track()));
+    connect(mb->acBoat_Show,  SIGNAL(triggered()), this, SLOT(slotBoat_Show()));
+    connect(mb->acBoat_Clear, SIGNAL(triggered()), this, SLOT(slotBoat_Clear()));
+    connect(mb->ac_SetBoatStart, SIGNAL(triggered()),
+            this, SLOT(slotBoat_SetStartHere()));
+    connect(mb->ac_BoatInsertWaypoint, SIGNAL(triggered()),
+            this, SLOT(slotBoat_InsertWaypoint()));
+    connect(mb->ac_BoatDeleteWaypoint, SIGNAL(triggered()),
+            this, SLOT(slotBoat_DeleteWaypoint()));
+
+    //-- several forecasts at once --------------------------
+    connect(mb->acFile_AddGRIB, SIGNAL(triggered()), this, SLOT(slotFile_AddGRIB()));
+    connect(mb->acFile_DownloadAll, SIGNAL(triggered()), this, SLOT(slotFile_DownloadAllModels()));
+    connect(mb->acModel_Next,   SIGNAL(triggered()), this, SLOT(slotModel_Next()));
+    connect(mb->acModel_Prev,   SIGNAL(triggered()), this, SLOT(slotModel_Prev()));
+    connect(mb->acModel_Close,  SIGNAL(triggered()), this, SLOT(slotModel_Close()));
+    connect(mb->cbModels, SIGNAL(activated(int)), this, SLOT(slotModel_Selected(int)));
+    for (QAction *ac : mb->acModelSelect)
+        connect(ac, SIGNAL(triggered()), this, SLOT(slotModel_Shortcut()));
+    connect(terre, SIGNAL(modelListChanged()), this, SLOT(slotModelListChanged()));
+
     connect(mb->acFile_Open, SIGNAL(triggered()), this, SLOT(slotFile_Open()));
     connect(mb->acFile_Close, SIGNAL(triggered()), this, SLOT(slotFile_Close()));
     connect(mb->acFile_NewInstance, SIGNAL(triggered()), this, SLOT(slotGenericAction()));
@@ -420,11 +447,6 @@ mb->acMap_SelectMETARs->setVisible (false);	// TODO
     //-------------------------------------------------------
     connect(mb->acHelp_Help, SIGNAL(triggered()), this, SLOT(slotHelp_Help()));
     connect(mb->acHelp_APropos, SIGNAL(triggered()), this, SLOT(slotHelp_APropos()));
-    connect(mb->acCheckForUpdates, SIGNAL(triggered()), this, SLOT(slotCheckForUpdates()));
-
-    if (maintenanceToolLocation != "")
-        connect(mb->acRunMaintenanceTool, SIGNAL(triggered()), this, SLOT(slotRunMaintenanceTool()));
-
     connect(mb->acHelp_AProposQT, SIGNAL(triggered()), this, SLOT(slotHelp_AProposQT()));
 
     //-------------------------------------
@@ -554,6 +576,9 @@ MainWindow::MainWindow (int w, int h, QWidget *parent)
     //---------------------------------------------------------
     menuPopupBtRight = menuBar->createPopupBtRight(this);
 
+    boatTrackWindow = nullptr;
+    menuBar->acBoat_Show->setChecked (terre->getVirtualBoat()->isVisible());
+
     //---------------------------------------------------------
 	// Active les actions
     //---------------------------------------------------------
@@ -591,6 +616,9 @@ void MainWindow::createToolBar ()
 	toolBar->setObjectName ("mainToolBar");
     toolBar->setFloatable(false);
     toolBar->setMovable(false);
+    // Slightly smaller icons: at the default size the row runs off the
+    // end of an ordinary window and buttons vanish into the ">>" menu.
+    toolBar->setIconSize (QSize (24, 24));
     toolBar->addAction(menuBar->acFile_Quit);
     toolBar->addSeparator();
     toolBar->addAction(menuBar->acFile_Open);
@@ -619,6 +647,30 @@ void MainWindow::createToolBar ()
     toolBar->addAction(menuBar->acSelectToggle);
     toolBar->addAction(menuBar->acPanToggle);
     toolBar->addSeparator();
+
+    // A row of its own. Sharing the first one meant that on a window of
+    // ordinary width these buttons fell off the end into the ">>" menu,
+    // where nobody looks - the route and speed dialog among them.
+    addToolBarBreak ();
+    toolBarBoat = addToolBar (tr("Forecasts and boat"));
+    assert (toolBarBoat);
+    toolBarBoat->setObjectName ("boatToolBar");
+    toolBarBoat->setFloatable (false);
+    toolBarBoat->setMovable (false);
+    toolBarBoat->setIconSize (QSize (24, 24));
+    // Loaded forecasts: fetch them, step through them, pick one.
+    toolBarBoat->addAction(menuBar->acFile_DownloadAll);
+    toolBarBoat->addAction(menuBar->acModel_Prev);
+    actModelsCombo = toolBarBoat->addWidget(menuBar->cbModels);
+    toolBarBoat->addAction(menuBar->acModel_Next);
+    toolBarBoat->addAction(menuBar->acModel_Close);
+    toolBarBoat->addSeparator();
+    // Speed and departure live in this dialog; without a button of its
+    // own it is only reachable through the Boat menu.
+    toolBarBoat->addAction(menuBar->acBoat_Draw);
+    toolBarBoat->addAction(menuBar->acBoat_Edit);
+    toolBarBoat->addAction(menuBar->acBoat_Track);
+    toolBarBoat->addSeparator();
 }
 //-----------------------------------------------
 void MainWindow::moveEvent (QMoveEvent *)
@@ -1003,7 +1055,22 @@ void MainWindow::setMenubarItems()
 }
 
 //-------------------------------------------------
-void MainWindow::openMeteoDataFile (const QString& fileName)
+bool MainWindow::forecastHasExpired (time_t *last) const
+{
+	*last = 0;
+	GriddedPlotter *plotter = terre->getGriddedPlotter ();
+	if (plotter == nullptr || !plotter->isReaderOk())
+		return false;
+	std::set<time_t> dates = plotter->getReader()->getListDates ();
+	if (dates.empty())
+		return false;
+	*last = *dates.rbegin ();
+	// An hour of slack: a run whose last step is this minute is still
+	// worth looking at, and clock skew should not condemn it.
+	return *last + 3600 < time (nullptr);
+}
+//-------------------------------------------------
+void MainWindow::openMeteoDataFile (const QString& fileName, bool automatic)
 {
 	QCursor oldcursor = cursor();
 	setCursor(Qt::WaitCursor);
@@ -1055,12 +1122,43 @@ void MainWindow::openMeteoDataFile (const QString& fileName)
 			}
 		}
 		//------------------------------------------------
+		// A forecast that has already run out says nothing about today's
+		// weather, and shown without comment it is taken for current.
+		time_t last = 0;
+		if (meteoFileType == DATATYPE_GRIB && forecastHasExpired (&last))
+		{
+			QString when = QDateTime::fromTime_t (last, Qt::UTC)
+			               .toString ("yyyy-MM-dd HH:mm") + " UTC";
+			setCursor (oldcursor);
+			if (automatic) {
+				// Reopened by itself at start-up: drop it without asking.
+				slotFile_Close ();
+				statusBar->showMessage (
+				        tr("The forecast last opened has expired")
+				        + " (" + when + ") — " + tr("not shown"), 10000);
+				return;
+			}
+			if (QMessageBox::question (this, tr("Expired forecast"),
+			        tr("File :") + fileName + "\n\n"
+			        + tr("This forecast ends at %1, which is already past.")
+			          .arg (when) + "\n\n"
+			        + tr("Show it anyway?"),
+			        QMessageBox::Yes | QMessageBox::No, QMessageBox::No)
+			    != QMessageBox::Yes)
+			{
+				slotFile_Close ();
+				return;
+			}
+			setCursor (Qt::WaitCursor);
+		}
+
 		menuBar->updateDateSelector( );
 
 		dateChooser->setGriddedPlotter (plotter);
 		dateChooser->setVisible (Util::getSetting("showDateChooser", true).toBool());
 		//-----------------------------------------------
 		updateGriddedData ();
+		slotModelListChanged ();
 	}
 	//------------------------------------------------
 	else  
@@ -1134,8 +1232,31 @@ void MainWindow::updateGriddedData ()
 		if (dtc2.dataType == GRB_PRV_WIND_JET)
 			dtc2.dataType = GRB_PRV_WIND_XY2D;
 
+		// This forecast may simply not carry the field the user chose:
+		// a wave model has no wind, a wind file has no waves. Show the
+		// most useful field it does have instead of a blank map - and do
+		// not store the substitute, so the choice comes back with the
+		// next forecast that has it.
+		bool userChoice = true;
 		if (! reader->hasData(dtc2)) {
+			userChoice = false;
 			dtc = DataCode (GRB_TYPE_NOT_DEFINED, LV_TYPE_NOT_DEFINED, 0);
+			static const DataCode fallbacks[] = {
+				DataCode (GRB_PRV_WIND_XY2D, LV_ABOV_GND, 10),
+				DataCode (GRB_WIND_GUST,     LV_GND_SURF,  0),
+				DataCode (GRB_WAV_SIG_HT,    LV_GND_SURF,  0),
+				DataCode (GRB_PRV_CUR_XY2D,  LV_GND_SURF,  0),
+				DataCode (GRB_PRESSURE_MSL,  LV_MSL,       0),
+				DataCode (GRB_TEMP,          LV_ABOV_GND,  2),
+				DataCode (GRB_PRECIP_TOT,    LV_GND_SURF,  0),
+				DataCode (GRB_CLOUD_TOT,     LV_ATMOS_ALL, 0)
+			};
+			for (const DataCode &f : fallbacks) {
+				if (reader->hasData (f)) {
+					dtc = f;
+					break;
+				}
+			}
 		}
 
 		//-----------------------------------------
@@ -1146,7 +1267,45 @@ void MainWindow::updateGriddedData ()
 		}
 		menuBar->acView_useJetSTreamColorMap->setChecked (useJetStreamColorMap);
 		menuBar->acView_useAbsoluteGustSpeed->setChecked (useGustColorAbsolute);
-		terre->setColorMapData (dtc);
+		terre->setColorMapData (dtc, userChoice);
+
+		// Wave arrows need a direction field. Several servers send the
+		// significant wave height without its direction, so the combined
+		// arrows have nothing to draw; in that case point the arrows at a
+		// component that does carry a direction.
+		int waveType = Util::getSetting ("waveArrowsType",
+		                                 GRB_TYPE_NOT_DEFINED).toInt();
+		if (waveType != GRB_TYPE_NOT_DEFINED) {
+			struct { int prv; int dirType; } waveDirs[] = {
+				{GRB_PRV_WAV_SIG,  GRB_WAV_DIR},
+				{GRB_PRV_WAV_MAX,  GRB_WAV_MAX_DIR},
+				{GRB_PRV_WAV_SWL,  GRB_WAV_SWL_DIR},
+				{GRB_PRV_WAV_WND,  GRB_WAV_WND_DIR},
+				{GRB_PRV_WAV_PRIM, GRB_WAV_PRIM_DIR},
+				{GRB_PRV_WAV_SCDY, GRB_WAV_SCDY_DIR}
+			};
+			int chosenDir = GRB_TYPE_NOT_DEFINED;
+			for (const auto &w : waveDirs)
+				if (w.prv == waveType)
+					chosenDir = w.dirType;
+
+			if (chosenDir != GRB_TYPE_NOT_DEFINED
+			        && !plotter->hasWaveDataType (chosenDir)) {
+				int subst = GRB_TYPE_NOT_DEFINED;
+				for (const auto &w : waveDirs) {
+					if (plotter->hasWaveDataType (w.dirType)) {
+						subst = w.prv;
+						break;
+					}
+				}
+				if (subst != GRB_TYPE_NOT_DEFINED) {
+					// Applied for this file only: the menu follows, the
+					// stored preference does not change.
+					menuBar->setWaveArrowsType (subst);
+					terre->setWaveArrowsTypeTemporary (subst);
+				}
+			}
+		}
 	}
 }
 //-------------------------------------------------
@@ -1181,6 +1340,454 @@ void MainWindow::slotCreatePOI ()
 	double lon, lat;
 	proj->screen2map(mouseClicX,mouseClicY, &lon, &lat);
 	new POI_Editor (Settings::getNewCodePOI(), lon, lat, proj, this, terre);
+}
+//=================================================
+// Several forecasts loaded at once
+//=================================================
+void MainWindow::applyLoadedModel (const QString &fileName)
+{
+	GriddedPlotter *plotter = terre->getGriddedPlotter ();
+	if (plotter == nullptr || !plotter->isReaderOk())
+		return;
+
+	disableMenubarItems ();
+	setMenubarItems ();
+
+	// Title shows the model, not the download file name: with several
+	// forecasts open the model is what one needs to see.
+	int slot = terre->getActiveModel ();
+	QString what = (slot >= 0) ? terre->getModelName (slot)
+	                           : QFileInfo(fileName).fileName();
+	if (terre->countModels() > 1)
+		what += QString(" (%1/%2)").arg(slot+1).arg(terre->countModels());
+	setWindowTitle (Version::getShortName() + " - " + what);
+	gribFileName = fileName;
+	menuBar->updateListeDates (plotter->getListDates(), plotter->getCurrentDate());
+	menuBar->updateDateSelector ();
+
+	menuBar->acView_DuplicateFirstCumulativeRecord->setEnabled (true);
+	menuBar->acView_InterpolateMissingRecords->setEnabled (true);
+	menuBar->acView_DuplicateMissingWaveRecords->setEnabled (true);
+
+	dateChooser->setGriddedPlotter (plotter);
+	dateChooser->setVisible (Util::getSetting("showDateChooser", true).toBool());
+
+	colorScaleWidget->setColorScale (nullptr, DataCode());
+	updateGriddedData ();
+}
+//-------------------------------------------------
+void MainWindow::slotModelListChanged ()
+{
+	int n = terre->countModels ();
+	int active = terre->getActiveModel ();
+
+	// Rebuild the selector without letting it fire back at us.
+	menuBar->cbModels->blockSignals (true);
+	menuBar->cbModels->clear ();
+	for (int i=0; i<n; i++)
+		menuBar->cbModels->addItem (QString("%1. %2").arg(i+1)
+		                            .arg(terre->getModelName(i)));
+	if (active >= 0 && active < n)
+		menuBar->cbModels->setCurrentIndex (active);
+	menuBar->cbModels->blockSignals (false);
+
+	// One forecast alone needs no selector.
+	actModelsCombo->setVisible (n > 1);
+	menuBar->acModel_Next->setEnabled (n > 1);
+	menuBar->acModel_Prev->setEnabled (n > 1);
+	menuBar->acModel_Close->setEnabled (n > 0);
+
+	for (int i=0; i<menuBar->acModelSelect.size(); i++) {
+		QAction *ac = menuBar->acModelSelect.at(i);
+		ac->setVisible (i < n);
+		// A hidden action still answers its shortcut, so disable it too.
+		ac->setEnabled (i < n);
+		if (i < n)
+			ac->setText (QString("%1. %2").arg(i+1).arg(terre->getModelName(i)));
+	}
+
+	// Say out loud which forecast is on screen: with the keyboard the
+	// selector is not where the eye is looking.
+	if (active >= 0 && active < n) {
+		QString msg = QString("%1 %2/%3 : %4")
+		        .arg(tr("Forecast")).arg(active+1).arg(n)
+		        .arg(terre->getModelName(active));
+
+		// An atmospheric model and a wave model are two separate files.
+		// Asking GFS for waves and getting an empty sea looks like a
+		// fault, so name the forecast that does carry them.
+		if (!terre->modelHasWaves (active)) {
+			QString waveSlot;
+			for (int i=0; i<n && waveSlot.isEmpty(); i++)
+				if (terre->modelHasWaves (i))
+					waveSlot = QString("%1. %2").arg(i+1)
+					           .arg(terre->getModelName(i));
+			if (!waveSlot.isEmpty())
+				msg += "  —  " + tr("no sea state in this one, see")
+				     + " " + waveSlot;
+		}
+		statusBar->showMessage (msg, 8000);
+	}
+
+	if (boatTrackWindow != nullptr && boatTrackWindow->isVisible()) {
+		boatTrackWindow->setPlotter (terre->getGriddedPlotter());
+		boatTrackWindow->refresh ();
+	}
+}
+//-------------------------------------------------
+void MainWindow::addMeteoDataFile (const QString& fileName)
+{
+	bool first = (terre->countModels() == 0);
+	QCursor oldcursor = cursor();
+	setCursor (Qt::WaitCursor);
+	FileDataType type = terre->loadMeteoDataFile (fileName, first, !first);
+	setCursor (oldcursor);
+	if (type == DATATYPE_GRIB) {
+		Util::setSetting ("gribFileName", fileName);
+		applyLoadedModel (fileName);
+		slotModelListChanged ();
+	}
+}
+//-------------------------------------------------
+void MainWindow::slotFile_AddGRIB ()
+{
+	QString filter = "GRIB (*.grb *.grib *.grb2 *.grib2 *.grb.bz2 *.grib.bz2"
+	                 " *.grb2.bz2 *.grib2.bz2 *.grb.gz *.grib.gz *.grb2.gz *.grib2.gz)";
+	QString fileName = Util::getOpenFileName (this,
+	                        tr("Add a GRIB file..."), gribFilePath, filter);
+	if (fileName.isEmpty())
+		return;
+
+	gribFilePath = QFileInfo(fileName).absolutePath();
+	Util::setSetting ("gribFilePath", gribFilePath);
+
+	QCursor oldcursor = cursor();
+	setCursor (Qt::WaitCursor);
+	// keepPrevious=true : the forecasts already loaded stay in memory.
+	FileDataType type = terre->loadMeteoDataFile (fileName, false, true);
+	setCursor (oldcursor);
+
+	if (type == DATATYPE_GRIB) {
+		// Same rule as when opening: an expired forecast is not put on
+		// screen without saying so.
+		time_t last = 0;
+		if (forecastHasExpired (&last)) {
+			QString when = QDateTime::fromTime_t (last, Qt::UTC)
+			               .toString ("yyyy-MM-dd HH:mm") + " UTC";
+			if (QMessageBox::question (this, tr("Expired forecast"),
+			        tr("File :") + fileName + "\n\n"
+			        + tr("This forecast ends at %1, which is already past.")
+			          .arg (when) + "\n\n"
+			        + tr("Add it anyway?"),
+			        QMessageBox::Yes | QMessageBox::No, QMessageBox::No)
+			    != QMessageBox::Yes)
+			{
+				terre->removeModel (terre->getActiveModel());
+				slotModelListChanged ();
+				return;
+			}
+		}
+		applyLoadedModel (fileName);
+		slotModelListChanged ();
+	}
+	else if (type != DATATYPE_CANCELLED) {
+		QMessageBox::critical (this, tr("Error"),
+		        tr("File :") + fileName + "\n\n" + tr("Can't open file."));
+	}
+}
+//-------------------------------------------------
+void MainWindow::slotFile_DownloadAllModels ()
+{
+	// A selected rectangle is required, and deliberately so. Falling back
+	// to whatever the map happens to show meant that a zoomed-out map
+	// asked NOAA for the whole world: 25 MB per forecast hour, gigabytes
+	// over a full run, with nothing on screen to suggest why it was
+	// taking so long.
+	double x0, y0, x1, y1;
+	if (!terre->getSelectedRectangle (&x0, &y0, &x1, &y1)) {
+		QMessageBox::information (this, tr("Download all forecasts..."),
+		        tr("Select an area on the map first.") + "\n\n"
+		        + tr("Drag the mouse across the map to draw a rectangle, "
+		             "then run this command again.") + "\n"
+		        + tr("Only that area is downloaded, which is what keeps "
+		             "the files small enough to fetch."));
+		return;
+	}
+	if (x0 > x1) std::swap (x0, x1);
+	if (y0 > y1) std::swap (y0, y1);
+
+	QString destDir = Util::getSetting ("gribFilePath", "").toString();
+	if (destDir.isEmpty() || !QDir(destDir).exists())
+		destDir = QDir::homePath();
+
+	if (QMessageBox::question (this, tr("Download all forecasts..."),
+	        tr("Fetch every model available for this area?")
+	        + QString("\n\n%1: %2°..%3°E, %4°..%5°N\n\n")
+	          .arg(tr("Area")).arg(x0,0,'f',1).arg(x1,0,'f',1)
+	          .arg(y0,0,'f',1).arg(y1,0,'f',1)
+	        + tr("Each model is taken from its latest run, as deep and as "
+	             "finely stepped as it publishes.") + "\n"
+	        + tr("Models that do not cover this area are skipped."),
+	        QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Yes)
+	    != QMessageBox::Yes)
+		return;
+
+	QProgressDialog progress (tr("Downloading forecasts..."), tr("Cancel"),
+	                          0, 1, this);
+	progress.setWindowModality (Qt::WindowModal);
+	progress.setMinimumDuration (0);
+	progress.show ();
+
+	MultiModelLoader loader (this);
+	QList<MultiModelLoader::Result> results =
+	        loader.run (x0, y0, x1, y1, destDir, &progress);
+	progress.close ();
+
+	// Load everything that came back, keeping the forecasts already open.
+	QStringList okLines, failLines;
+	bool first = (terre->countModels() == 0);
+	QString lastLoaded;
+	for (const MultiModelLoader::Result &r : results)
+	{
+		if (!r.ok) {
+			failLines << QString("• %1 — %2").arg(r.label).arg(r.note);
+			continue;
+		}
+		FileDataType t = terre->loadMeteoDataFile (r.fileName, first, !first);
+		if (t == DATATYPE_GRIB) {
+			first = false;
+			lastLoaded = r.fileName;
+			// A fallback run can stop short of a whole number of days,
+			// so say how far it actually reaches when it does.
+			QString depth = (r.hours == r.days*24)
+			        ? QString("%1 %2").arg(r.days).arg(tr("days"))
+			        : QString("+%1 %2").arg(r.hours).arg(tr("h"));
+			okLines << QString("• %1 — %2, %3 %4 %5%6")
+			           .arg(r.label).arg(depth)
+			           .arg(tr("step")).arg(r.interval).arg(tr("h"))
+			           .arg(r.note.isEmpty() ? "" : "\n   " + r.note);
+		}
+		else {
+			failLines << QString("• %1 — %2").arg(r.label)
+			             .arg(tr("file could not be read"));
+		}
+	}
+
+	if (!lastLoaded.isEmpty()) {
+		// Show the first model rather than the last one downloaded.
+		terre->setActiveModel (0);
+		applyLoadedModel (terre->getModelFileName (0));
+	}
+	slotModelListChanged ();
+
+	QString text;
+	if (!okLines.isEmpty())
+		text += tr("Loaded:") + "\n" + okLines.join("\n") + "\n\n";
+	if (!failLines.isEmpty())
+		text += tr("Not available for this area:") + "\n" + failLines.join("\n");
+	if (text.isEmpty())
+		text = tr("Nothing could be downloaded.");
+
+	QMessageBox::information (this, tr("Download all forecasts..."), text);
+}
+//-------------------------------------------------
+void MainWindow::slotModel_Selected (int index)
+{
+	if (terre->setActiveModel (index))
+		applyLoadedModel (terre->getModelFileName (index));
+}
+//-------------------------------------------------
+void MainWindow::slotModel_Next ()
+{
+	int n = terre->countModels ();
+	if (n < 2)
+		return;
+	slotModel_Selected ((terre->getActiveModel() + 1) % n);
+}
+//-------------------------------------------------
+void MainWindow::slotModel_Prev ()
+{
+	int n = terre->countModels ();
+	if (n < 2)
+		return;
+	slotModel_Selected ((terre->getActiveModel() + n - 1) % n);
+}
+//-------------------------------------------------
+void MainWindow::slotModel_Shortcut ()
+{
+	QAction *ac = qobject_cast<QAction*>(sender());
+	if (ac != nullptr)
+		slotModel_Selected (ac->data().toInt());
+}
+//-------------------------------------------------
+void MainWindow::slotModel_Close ()
+{
+	int active = terre->getActiveModel ();
+	if (active < 0)
+		return;
+	terre->removeModel (active);
+	if (terre->countModels() > 0)
+		applyLoadedModel (terre->getModelFileName (terre->getActiveModel()));
+	else
+		slotFile_Close ();
+}
+
+//=================================================
+// Virtual boat
+//=================================================
+void MainWindow::slotBoat_Draw ()
+{
+	if (terre->isRouteDrawing()) {          // the menu item toggles the mode off
+		terre->stopRouteDrawing ();
+		return;
+	}
+
+	VirtualBoat *boat = terre->getVirtualBoat ();
+
+	if (boat->countWaypoints() > 0) {
+		QMessageBox::StandardButton rep = QMessageBox::question (this,
+		        tr("Draw the route on the map"),
+		        tr("A route already exists.\n\n"
+		           "Yes: start a new route.\n"
+		           "No: keep it and go on adding waypoints."),
+		        QMessageBox::Yes | QMessageBox::No | QMessageBox::Cancel,
+		        QMessageBox::Yes);
+		if (rep == QMessageBox::Cancel) {
+			menuBar->acBoat_Draw->setChecked (false);
+			return;
+		}
+		if (rep == QMessageBox::Yes)
+			boat->clear ();
+	}
+
+	// A route drawn from scratch leaves at the first forecast step.
+	GriddedPlotter *plotter = terre->getGriddedPlotter ();
+	if (boat->getStartDate() == 0 && plotter != nullptr && plotter->isReaderOk())
+		boat->setStartDate (plotter->getReader()->getFirstDate());
+
+	menuBar->acBoat_Draw->setChecked (true);
+	menuBar->acBoat_Show->setChecked (true);
+	terre->startRouteDrawing ();
+	statusBar->showMessage (
+	        tr("Route: left click adds a waypoint, right click ends it, "
+	           "Backspace removes the last one, Esc cancels."));
+}
+//-------------------------------------------------
+void MainWindow::slotBoat_DrawingChanged (bool finished)
+{
+	if (finished) {
+		menuBar->acBoat_Draw->setChecked (false);
+		VirtualBoat *boat = terre->getVirtualBoat ();
+		if (boat->isDefined())
+			statusBar->showMessage (tr("Route")+" : "
+			        + Util::formatDistance (boat->getTotalDistance())
+			        + "  —  " + tr("ETA") + " "
+			        + Util::formatDateTimeShort (boat->getArrivalDate()));
+		else
+			statusBar->clearMessage ();
+	}
+	slotBoat_Changed ();
+}
+//-------------------------------------------------
+void MainWindow::slotBoat_Edit ()
+{
+	VirtualBoat *boat = terre->getVirtualBoat ();
+	// A route needs a starting point: without one, offer the centre of
+	// the visible map rather than an empty dialog.
+	if (boat->countWaypoints() == 0) {
+		double lon, lat;
+		proj->screen2map (terre->width()/2, terre->height()/2, &lon, &lat);
+		time_t start = 0;
+		GriddedPlotter *plotter = terre->getGriddedPlotter ();
+		if (plotter != nullptr && plotter->isReaderOk())
+			start = plotter->getReader()->getFirstDate ();
+		boat->setStart (lon, lat, start);
+	}
+
+	DialogVirtualBoat dialog (boat, terre->getGriddedPlotter(), this);
+	connect (&dialog, SIGNAL(signalBoatChanged()), this, SLOT(slotBoat_Changed()));
+	dialog.exec ();
+	slotBoat_Changed ();
+}
+//-------------------------------------------------
+void MainWindow::slotBoat_Track ()
+{
+	GriddedPlotter *plotter = terre->getGriddedPlotter ();
+	if (boatTrackWindow == nullptr)
+		boatTrackWindow = new BoatTrackWindow (terre->getVirtualBoat(), plotter, this);
+	else
+		boatTrackWindow->setPlotter (plotter);
+	boatTrackWindow->refresh ();
+	boatTrackWindow->show ();
+	boatTrackWindow->raise ();
+	boatTrackWindow->activateWindow ();
+}
+//-------------------------------------------------
+void MainWindow::slotBoat_Show ()
+{
+	terre->getVirtualBoat()->setVisible (menuBar->acBoat_Show->isChecked());
+	terre->getVirtualBoat()->writeSettings ();
+	terre->refreshVirtualBoat ();
+}
+//-------------------------------------------------
+void MainWindow::slotBoat_Clear ()
+{
+	terre->getVirtualBoat()->clear ();
+	terre->getVirtualBoat()->writeSettings ();
+	slotBoat_Changed ();
+}
+//-------------------------------------------------
+void MainWindow::slotBoat_SetStartHere ()
+{
+	double lon, lat;
+	proj->screen2map (mouseClicX, mouseClicY, &lon, &lat);
+
+	VirtualBoat *boat = terre->getVirtualBoat ();
+	time_t start = boat->getStartDate ();
+	GriddedPlotter *plotter = terre->getGriddedPlotter ();
+	if (start == 0 && plotter != nullptr && plotter->isReaderOk())
+		start = plotter->getReader()->getFirstDate ();
+
+	boat->setStart (lon, lat, start);
+	boat->setVisible (true);
+	menuBar->acBoat_Show->setChecked (true);
+	boat->writeSettings ();
+	slotBoat_Changed ();
+	slotBoat_Edit ();
+}
+//-------------------------------------------------
+void MainWindow::slotBoat_InsertWaypoint ()
+{
+	VirtualBoat *boat = terre->getVirtualBoat ();
+	double lon, lat;
+	int leg = boat->findLeg (proj, mouseClicX, mouseClicY, 8, &lon, &lat);
+	if (leg < 0)
+		return;
+	// The new point goes between the two ends of the leg that was clicked.
+	boat->insertWaypoint (leg+1, lon, lat);
+	boat->writeSettings ();
+	slotBoat_Changed ();
+}
+//-------------------------------------------------
+void MainWindow::slotBoat_DeleteWaypoint ()
+{
+	VirtualBoat *boat = terre->getVirtualBoat ();
+	int wp = boat->findWaypoint (proj, mouseClicX, mouseClicY);
+	if (wp < 0)
+		return;
+	boat->removeWaypoint (wp);
+	boat->setHighlight (-1);
+	boat->writeSettings ();
+	slotBoat_Changed ();
+}
+//-------------------------------------------------
+void MainWindow::slotBoat_Changed ()
+{
+	terre->refreshVirtualBoat ();
+	if (boatTrackWindow != nullptr && boatTrackWindow->isVisible()) {
+		boatTrackWindow->setPlotter (terre->getGriddedPlotter());
+		boatTrackWindow->refresh ();
+	}
 }
 //-------------------------------------------------
 void MainWindow::createPOIs ()
@@ -1609,14 +2216,26 @@ void MainWindow::slotHelp_Help() {
 //-------------------------------------------------
 void MainWindow::slotHelp_APropos()
 {
-    QMessageBox::information (this,
+    // The GPL asks a modified version to say plainly that it is one, and
+    // to keep crediting what it was built from. That belongs here, where
+    // anyone looks first.
+    QMessageBox::about (this,
             tr("About"),
-            tr("XyGrib : GRIB files visualization")
-            +"\n"+
-            tr("Version : ")+Version::getVersion()
-                    +"      "+Version::getDate()
-            +"\n"+ tr("Licence : GNU GPL v3")
-            +"\n"+ tr("https://OpenGribs.org")
+            "<b>MAKGrib</b> — " + tr("GRIB files visualization") + "<br>"
+            + tr("Version : ") + Version::getVersion()
+            + "&nbsp;&nbsp;&nbsp;" + Version::getDate() + "<br><br>"
+            + tr("A modified version of XyGrib, 2026.") + "<br>"
+            + tr("Added: virtual boat and weather along the route, several "
+                 "forecasts open at once, direct download from NOAA when the "
+                 "OpenGribs server is unavailable.") + "<br><br>"
+            + tr("Based on XyGrib") + " — "
+              "<a href=\"https://github.com/opengribs/XyGrib\">"
+              "github.com/opengribs/XyGrib</a><br>"
+            + tr("© 2012-2019 OpenGribs contributors") + "<br>"
+            + tr("Based on zyGrib, © 2008-2012 Jacques Zaninetti") + "<br><br>"
+            + tr("Licence : GNU GPL v3 or later. This program comes with "
+                 "absolutely no warranty. The source code is included with "
+                 "the distribution.")
         );
 }
 //-------------------------------------------------
@@ -1908,7 +2527,7 @@ void MainWindow::slotChangeSkin(bool b)
         Util::setSetting("showDarkSkin", false);
     }
     QMessageBox::information(this,tr("Change Skin"),
-                             tr("For skin change to take effect XyGrib needs to be restarted"));
+                             tr("For skin change to take effect MAKGrib needs to be restarted"));
 
 }
 //-------------------------------------------------
@@ -1956,9 +2575,22 @@ void MainWindow::slotMouseClicked(QMouseEvent * e)
             terre->setProjection(proj);
             break;
 
-        case Qt::RightButton :
+        case Qt::RightButton : {
+            // The two route entries only make sense over the route itself.
+            VirtualBoat *boat = terre->getVirtualBoat ();
+            int wp = -1, leg = -1;
+            if (boat->isVisible() && boat->countWaypoints() > 0) {
+                wp  = boat->findWaypoint (proj, mouseClicX, mouseClicY);
+                if (wp < 0)
+                    leg = boat->findLeg (proj, mouseClicX, mouseClicY, 8,
+                                         nullptr, nullptr);
+            }
+            menuBar->ac_BoatDeleteWaypoint->setVisible (wp >= 0);
+            menuBar->ac_BoatInsertWaypoint->setVisible (leg >= 0);
+
             // Affiche un menu popup
             menuPopupBtRight->exec(QCursor::pos());
+        }
             break;
 
         default :

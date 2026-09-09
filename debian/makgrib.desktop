@@ -1,0 +1,11 @@
+[Desktop Entry]
+Encoding=UTF-8
+Name=MAKGrib
+GenericName=GRIB weather file viewer
+Comment=Marine weather forecasts and route planning
+Exec=MAKGrib
+Icon=makgrib
+Terminal=false
+Type=Application
+Categories=Education;Science;
+StartupNotify=true

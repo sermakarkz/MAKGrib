@@ -15,6 +15,7 @@ DataMeteoAbstract.h
 DataPointInfo.h
 DataQString.h
 DateChooser.h
+DialogVirtualBoat.h
 DialogBoxBase.h
 DialogBoxColumn.h
 DialogFonts.h
@@ -47,12 +48,16 @@ Metar.h
 MeteoTable.h
 MeteoTableWidget.h
 MeteotableOptionsDialog.h
+MultiModelLoader.h
+NomadsLoader.h
+WinHttpFetch.h
 RegularGridded.h
 RegularGriddedPlot.h
 SkewT.h
 Stylesheet.h
 Terrain.h
 Therm.h
+VirtualBoat.h
 #Version.h
 )
 
@@ -66,6 +71,7 @@ DataMeteoAbstract.cpp
 DataPointInfo.cpp
 DataQString.cpp
 DateChooser.cpp
+DialogVirtualBoat.cpp
 DialogBoxColumn.cpp
 DialogFonts.cpp
 DialogGraphicsParams.cpp
@@ -96,10 +102,14 @@ Metar.cpp
 MeteoTable.cpp
 MeteoTableWidget.cpp
 MeteotableOptionsDialog.cpp
+MultiModelLoader.cpp
+NomadsLoader.cpp
+WinHttpFetch.cpp
 SkewT.cpp
 SkewTWindow.cpp
 Terrain.cpp
 Therm.cpp
+VirtualBoat.cpp
 main.cpp
 )
 IF(WIN32)
@@ -119,6 +129,11 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/map ${MAP_GENERATED_HEADERS})
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/GUI ${GUI_GENERATED_HEADERS})
 
 target_link_libraries(${CMAKE_PROJECT_NAME} g2clib gui util map ${LIBNOVA_LIBRARY} ${OPENJPEG_LIBRARIES} ${Qt5Core_LIBRARIES} ${Qt5Gui_LIBRARIES} ${Qt5Widgets_LIBRARIES} ${Qt5Network_LIBRARIES} ${Qt5Xml_LIBRARIES} ${Qt5PrintSupport_LIBRARIES} ${BZIP2_LIBRARIES} ${ZLIB_LIBRARIES} ${PROJ_LIBRARIES} ${PNG_LIBRARIES})
+
+# WinHTTP: на Windows загрузка с NOAA идёт через системное шифрование.
+if(WIN32)
+  target_link_libraries(${CMAKE_PROJECT_NAME} winhttp)
+endif()
 
 # Sanitizers, part 2/2
 if ( CMAKE_VERSION VERSION_GREATER 3.4 )

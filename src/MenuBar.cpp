@@ -83,6 +83,36 @@ MenuBar::MenuBar (QWidget *parent, bool mbe)
                     tr("New instance"), "Ctrl+Shift+N",
                     tr("Open a new xyGrib instance"), "");
         menuFile->addSeparator();
+        //-- several forecasts loaded side by side ------------------
+        acFile_AddGRIB = addAction (menuFile,
+                    tr("Add a GRIB file..."), "Ctrl+Shift+O",
+                    tr("Load one more forecast without unloading the others"),
+                    Util::pathImg("fileopen.png"));
+        acFile_DownloadAll = addAction (menuFile,
+                    tr("Download all forecasts..."), "Ctrl+Shift+D",
+                    tr("Fetch every model available for this area at once"),
+                    Util::pathImg("network.png"));
+        acModel_Next = addAction (menuFile,
+                    tr("Next model"), "Ctrl+Tab",
+                    tr("Show the next loaded forecast model"),
+                    Util::pathImg("2rightarrow.png"));
+        acModel_Prev = addAction (menuFile,
+                    tr("Previous model"), "Ctrl+Shift+Tab",
+                    tr("Show the previous loaded forecast model"),
+                    Util::pathImg("2leftarrow.png"));
+        acModel_Close = addAction (menuFile,
+                    tr("Close this forecast"), "Ctrl+Shift+W",
+                    tr("Unload the forecast currently displayed"),
+                    Util::pathImg("fileclose.png"));
+        // Ctrl+1..9 jump straight to a given forecast.
+        for (int i=1; i<=9; i++) {
+            QAction *ac = addAction (menuFile, tr("Forecast")+" "+QString::number(i),
+                                     QString("Ctrl+%1").arg(i), "");
+            ac->setData (i-1);
+            ac->setVisible (false);     // shown only when that slot exists
+            acModelSelect << ac;
+        }
+        menuFile->addSeparator();
         acFile_Load_GRIB = addAction (menuFile,
                     tr("Download GRIB"), "Ctrl+D",
                     tr("Download"), Util::pathImg("network.png"));
@@ -433,14 +463,29 @@ MenuBar::MenuBar (QWidget *parent, bool mbe)
         acHelp_Help = addAction (menuHelp,
                         tr("Help"), "Ctrl+H",
         				"",Util::pathImg("help.png"));
-        acHelp_APropos = addAction (menuHelp, tr("About XyGrib"),"","","");
-        acCheckForUpdates = addAction (menuHelp, tr("Check for updates"),"","","");
-
-        if (maintenanceToolExists)
-            acRunMaintenanceTool = addAction (menuHelp, tr("Run XyGrib Maintenance Tool"),"",
-                                          tr("To add, update or remove XyGrib components"),"");
+        acHelp_APropos = addAction (menuHelp, tr("About MAKGrib"),"",
+                        tr("Version, licence and what this is a fork of"),"");
+        // No "check for updates" and no maintenance tool: both belong to
+        // XyGrib's own installer, which would replace this program.
+        acCheckForUpdates = nullptr;
+        acRunMaintenanceTool = nullptr;
 
         acHelp_AProposQT = addAction (menuHelp, tr("About Qt"),"","","");
+
+    //======================================================================
+    menuBoat = new QMenu (tr("Boat"));
+        acBoat_Draw  = addActionCheck (menuBoat, tr("Draw the route on the map"), "Ctrl+L",
+                            tr("Left click adds a waypoint, right click ends the route"),
+                            Util::pathImg("cursor-cross.png"));
+        acBoat_Edit  = addAction (menuBoat, tr("Route and speed..."), "Ctrl+B",
+                            tr("Departure time, boat speed and the list of waypoints"),
+                            Util::pathImg("time_icon.png"));
+        acBoat_Track = addAction (menuBoat, tr("Weather along the route..."), "",
+                            tr("Weather the boat meets at each forecast step"),
+                            Util::pathImg("spreadsheet.png"));
+        menuBoat->addSeparator();
+        acBoat_Show  = addActionCheck (menuBoat, tr("Show the boat"), "", "");
+        acBoat_Clear = addAction (menuBoat, tr("Clear the route"), "", "");
 
     //======================================================================
     addMenu (menuFile);
@@ -448,6 +493,7 @@ MenuBar::MenuBar (QWidget *parent, bool mbe)
     addMenu (menuAltitude);
     addMenu (menuIsolines);
     addMenu (menuSeaState);
+    addMenu (menuBoat);
     addMenu (menuMap);
     addMenu (menuOptions);
     addMenu (menuHelp);
@@ -461,11 +507,21 @@ MenuBar::MenuBar (QWidget *parent, bool mbe)
 
     cbDatesGrib = new QComboBox ();
     cbDatesGrib->setSizeAdjustPolicy (QComboBox::AdjustToContents);
+    cbDatesGrib->setToolTip (tr("Moment shown on the map, "
+                                "among the steps this forecast carries"));
     cbDatesGrib->addItem("-------------------------");
     updateDateSelector();
 
+    cbModels = new QComboBox ();
+    cbModels->setSizeAdjustPolicy (QComboBox::AdjustToContents);
+    cbModels->setToolTip (tr("Forecasts loaded at the moment — "
+                             "pick which one the map shows"));
+    cbModels->setVisible (false);      // appears as soon as a file is loaded
+
     cbModelRect = new QComboBox ();
     cbModelRect->setSizeAdjustPolicy (QComboBox::AdjustToContents);
+    cbModelRect->setToolTip (tr("Outline on the map the area a regional "
+                                "model covers, before asking for it"));
     cbModelRect->addItem(tr("Show Model Limits"));
     cbModelRect->addItem("Arome 0.025°");
     cbModelRect->addItem("ICON-EU Nest");
@@ -518,6 +574,10 @@ QMenu * MenuBar::createPopupBtRight(QWidget *parent)
 	ac_OpenMeteotable = addAction (popup, tr("Meteotable"),"","","");
 	ac_CreatePOI = addAction (popup, tr("Mark Point Of Interest"),"","","");
 	ac_showSkewtDiagram = addAction (popup, tr("SkewT-LogP diagram"),"","","");
+	popup->addSeparator();
+	ac_SetBoatStart = addAction (popup, tr("Set the boat here"),"","","");
+	ac_BoatInsertWaypoint = addAction (popup, tr("Insert a waypoint here"),"","","");
+	ac_BoatDeleteWaypoint = addAction (popup, tr("Delete this waypoint"),"","","");
 
 	
     // added by Tim Holtschneider, 05.2010
@@ -554,6 +614,17 @@ QAction* MenuBar::addAction (QMenu *menu,
     action->setShortcut  (shortcut);
     action->setShortcutContext (Qt::ApplicationShortcut);
     action->setStatusTip (statustip);
+    // Every action gets a tooltip, built from the text that was already
+    // being written for the status bar. Without this a toolbar button is
+    // an icon and nothing else, and the status bar line is easy to miss.
+    // The shortcut goes on the end so it can be found without opening
+    // the menu.
+    QString tip = statustip.isEmpty() ? title : statustip;
+    tip.remove (QChar('&'));
+    if (!shortcut.isEmpty())
+        tip += "   (" + QKeySequence(shortcut).toString (QKeySequence::NativeText)
+             + ")";
+    action->setToolTip (tip);
     if (iconFileName != "") {
         action->setIcon(QIcon(iconFileName));
 		action->setIconVisibleInMenu(true);

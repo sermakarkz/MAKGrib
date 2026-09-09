@@ -40,9 +40,9 @@ int main (int argc, char *argv[])
 
     bool foundAppData;
 
-    QCoreApplication::setOrganizationName("openGribs");
+    QCoreApplication::setOrganizationName("MAKGrib");
     QCoreApplication::setOrganizationDomain("opengribs.org");
-    QCoreApplication::setApplicationName("XyGrib");
+    QCoreApplication::setApplicationName("MAKGrib");
 
     Util::setSetting("AppVersion", Version::getCompleteName());
 
@@ -251,6 +251,9 @@ int main (int argc, char *argv[])
     // Open main window
     //====================================================
 	Util::setApplicationProxy ();
+	// Поднимаем шифрование заранее, в отдельном потоке: иначе это
+	// произойдёт при первой загрузке и окно замрёт на всё это время.
+	Util::startSslWarmup ();
 
 	MainWindow *win = new MainWindow (800, 600);
 	assert (win);
@@ -289,27 +292,30 @@ int main (int argc, char *argv[])
 		QString filename = "";
 
 		if (cmdLineArgs.size() > 1) {
-			// find the last argument without "-"
+			// Every file named on the command line is opened, so several
+			// forecasts can be put side by side in one go. The last one
+			// falls through to the usual single-file path below.
+			QStringList files;
 			for(int i = 1; i < cmdLineArgs.size(); i++)
 			{
 				QString arg = cmdLineArgs[i];
 				//qDebug() << "CommandLineArg: " << str;
-				if (! arg.startsWith("-"))
-				{
-					filename = arg;
-				}
+				if (! arg.startsWith("-") && QFile::exists(arg))
+					files << arg;
 			}
-			if(! QFile::exists(filename)) {
-				filename = "";
-			}
+			for (int i = 0; i < files.size(); i++)
+				win->addMeteoDataFile (files.at(i));
+			if (!files.isEmpty())
+				openLatestGribFile = false;   // already opened above
 		}
 		
-		if (filename == "") {
+		if (filename == "" && openLatestGribFile) {
 			filename = Util::getSetting("gribFileName", "").toString();
 		}
-		if (QFile::exists(filename))
+		if (openLatestGribFile && QFile::exists(filename))
 		{
-			win->openMeteoDataFile (filename);
+			// automatic: an expired forecast is dropped rather than shown.
+			win->openMeteoDataFile (filename, true);
 		}
 
 	}
@@ -320,8 +326,9 @@ int main (int argc, char *argv[])
     }
 
 
-    // check for new versions
-    win->checkUpdates();
+    // No update check. It asked the OpenGribs server for XyGrib's version,
+    // which is meaningless for this fork - and answered 1.2.6, so every
+    // start offered to "update" MAKGrib by installing XyGrib over it.
 
     return QApplication::exec();
 }

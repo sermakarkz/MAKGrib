@@ -34,6 +34,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "MapDrawer.h"
 #include "GribPlot.h"
 #include "LongTaskProgress.h"
+#include "VirtualBoat.h"
 
 
 //==============================================================================
@@ -50,10 +51,28 @@ public:
     MapDrawer   *getDrawer()      {return drawer;}
     Projection  *getProjection()  {return proj;}
     
-    FileDataType  loadMeteoDataFile (const QString& fileName, bool zoom);
+    // keepPrevious=true adds the file as one more model slot instead of
+    // replacing what is already loaded, which is what makes switching
+    // between forecasts instant: every model stays parsed in memory.
+    FileDataType  loadMeteoDataFile (const QString& fileName, bool zoom,
+                                     bool keepPrevious=false);
 	FileDataType  getMeteoFileType()  {return currentFileType;}
 
 	void  closeMeteoDataFile();
+
+	//-- loaded models ---------------------------------------------
+	int      countModels () const        {return modelSlots.size();}
+	int      getActiveModel () const     {return activeSlot;}
+	QString  getModelName (int i) const;
+	QString  getModelFileName (int i) const;
+	// True when that forecast carries sea state. An atmospheric model and
+	// a wave model arrive as two separate files, so the answer differs
+	// from one slot to the next.
+	bool     modelHasWaves (int i) const;
+	// Switches the displayed model, keeping the valid time if the new
+	// model has it (that is what makes the comparison meaningful).
+	bool     setActiveModel (int i);
+	void     removeModel (int i);
 
 	//--------------------------------------------------------
 	GriddedPlotter  *getGriddedPlotter ();
@@ -78,8 +97,20 @@ public:
     bool  getGribFileRectangle (double *x0, double *y0, double *x1, double *y1);
     
 	QList<POI*> getListPOIs() { return findChildren <POI*>(); }
+
+	VirtualBoat * getVirtualBoat ()  {return &virtualBoat;}
+	// Redraws the boat without rebuilding the map underneath.
+	void  refreshVirtualBoat ()      {update();}
+
+	//-- clicking the route directly on the map -------------------
+	void  startRouteDrawing ();
+	void  stopRouteDrawing  ();
+	bool  isRouteDrawing () const    {return routeDrawing;}
 	
-	void     setColorMapData (const DataCode &dtc);
+	// remember=false applies the colour map without storing it as the
+	// user's choice. Needed when a model simply does not carry the field
+	// the user picked: the map must adapt, but the preference must survive.
+	void     setColorMapData (const DataCode &dtc, bool remember=true);
 	DataCode getColorMapData ();
 					
 	QPixmap * createPixmap (time_t date, int width, int height);
@@ -121,7 +152,9 @@ public slots :
 
     void setGribGrid          (bool);
     void setCitiesNamesLevel  (int level);
-	void setWaveArrowsType    (int type);
+	void setWaveArrowsType    (int type);   // slot: remembers the choice
+	// Same, but applied only to the file on screen (see setColorMapData).
+	void setWaveArrowsTypeTemporary (int type);
     
     void setDrawIsobars       (bool);
     void setDrawIsobarsLabels (bool);    
@@ -152,6 +185,13 @@ public slots :
     void slotMustRedraw();
     
 signals:
+    // The set of loaded models or the active one has changed.
+    void modelListChanged ();
+
+    // Emitted on every change made by clicking the route on the map,
+    // and once more with finished=true when the user ends the route.
+    void routeDrawingChanged (bool finished);
+
     void selectionOK  (double x0, double y0, double x1, double y1);
     void mouseClicked (QMouseEvent * e);
     void mouseMoved   (QMouseEvent * e);
@@ -161,13 +201,30 @@ signals:
 private:
 	MapDrawer *drawer;
 	FileDataType  currentFileType;
+	VirtualBoat   virtualBoat;
+
+	bool    routeDrawing;
+	bool    routeCursorValid;
+	double  routeCursorLon, routeCursorLat;
+	int     draggedWaypoint;    // -1 when no waypoint is being moved
+	// True when the boat route is on screen and can be edited.
+	bool    routeIsEditable () const;
 
 	//-----------------------------------------------
     Projection  *proj;
     GisReader   *gisReader;
 
-    GriddedPlotter  *griddedPlot;
-    
+    GriddedPlotter  *griddedPlot;      // the slot currently displayed
+
+    struct ModelSlot {
+        GriddedPlotter *plot;
+        QString         name;
+        QString         fileName;
+    };
+    QList<ModelSlot>  modelSlots;
+    int               activeSlot;
+    void  clearModelSlots ();
+
     bool        isEarthMapValid;
     bool        mustRedraw;
     bool    	isResizing;
