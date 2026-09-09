@@ -123,6 +123,43 @@ class Projection_ZYGRIB : public Projection
 };
 
 //=========================================================
+//=========================================================
+// Меркатор без внешних библиотек.
+//
+// Под Android PROJ не собирается намеренно: он тянет SQLite и базу
+// координатных систем, а на телефоне это лишний груз. Но карта у
+// моряка должна быть меркаторской — на ней линия постоянного курса
+// прямая, и только поэтому по ней можно править. Формула замкнутая,
+// библиотека для неё не нужна:
+//
+//     y = ln( tan(pi/4 + fi/2) )
+//
+// Ширины к полюсам растягиваются, поэтому за 85 градусов не заходим:
+// дальше y уходит в бесконечность, а судов там всё равно нет.
+//=========================================================
+class Projection_MERCATOR_Simple : public Projection
+{
+	public :
+		Projection_MERCATOR_Simple (int w, int h, double cx, double cy, double scale);
+		Projection_MERCATOR_Simple (const Projection_MERCATOR_Simple &);
+
+		Projection_MERCATOR_Simple *clone()
+				{ return new Projection_MERCATOR_Simple(*this); }
+
+		virtual void screen2map (int i, int j, double *x, double *y) const;
+		virtual void map2screen (double x, double y, int *i, int *j) const;
+
+		virtual void setVisibleArea (double x0, double y0, double x1, double y1);
+		virtual void setScale (double sc);
+
+	private :
+		// Широта в меркаторскую ординату и обратно, в градусах.
+		static double latToY (double lat);
+		static double yToLat (double y);
+		static const double LAT_LIMIT;   // 85 градусов
+};
+
+//=========================================================
 class Projection_libproj : public Projection
 {
 	public :

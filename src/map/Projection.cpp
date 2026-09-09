@@ -296,3 +296,86 @@ void Projection_ZYGRIB::setScale(double sc)
 
 
 
+
+//=========================================================
+// Projection_MERCATOR_Simple — Меркатор без PROJ
+//=========================================================
+const double Projection_MERCATOR_Simple::LAT_LIMIT = 85.0;
+
+//-------------------------------------------------------------------------------
+double Projection_MERCATOR_Simple::latToY (double lat)
+{
+	if (lat >  LAT_LIMIT) lat =  LAT_LIMIT;
+	if (lat < -LAT_LIMIT) lat = -LAT_LIMIT;
+	double f = lat * M_PI / 180.0;
+	return log (tan (M_PI/4.0 + f/2.0)) * 180.0 / M_PI;
+}
+//-------------------------------------------------------------------------------
+double Projection_MERCATOR_Simple::yToLat (double y)
+{
+	double f = y * M_PI / 180.0;
+	return (2.0 * atan (exp (f)) - M_PI/2.0) * 180.0 / M_PI;
+}
+//-------------------------------------------------------------------------------
+Projection_MERCATOR_Simple::Projection_MERCATOR_Simple (
+                        int w, int h, double cx, double cy, double scale)
+	: Projection (w, h, cx, cy, scale)
+{
+	setMapPointInScreen (CX, CY, W/2, H/2);
+	Projection_MERCATOR_Simple::setScale (scale);
+}
+//-------------------------------------------------------------------------------
+Projection_MERCATOR_Simple::Projection_MERCATOR_Simple (
+                        const Projection_MERCATOR_Simple &p)
+	: Projection (p)
+{
+}
+//-------------------------------------------------------------------------------
+void Projection_MERCATOR_Simple::map2screen (double x, double y, int *i, int *j) const
+{
+	*i = W/2 + (int) (scale * (x - CX) + 0.5);
+	*j = H/2 - (int) (scale * (latToY(y) - latToY(CY)) + 0.5);
+}
+//-------------------------------------------------------------------------------
+void Projection_MERCATOR_Simple::screen2map (int i, int j, double *x, double *y) const
+{
+	*x = CX + (double)(i - W/2) / scale;
+	*y = yToLat (latToY(CY) + (double)(H/2 - j) / scale);
+}
+//-------------------------------------------------------------------------------
+void Projection_MERCATOR_Simple::setScale (double sc)
+{
+	// Ниже этого масштаба на экран лезет больше, чем есть на свете.
+	double sx = W / 360.0;
+	double sy = H / (2.0 * latToY (LAT_LIMIT));
+	double scaleall = (sx < sy) ? sx : sy;
+	scale = sc;
+	if (scale < scaleall)
+		scale = scaleall;
+	if (scale > scalemax)
+		scale = scalemax;
+	updateBoundaries ();
+}
+//-------------------------------------------------------------------------------
+void Projection_MERCATOR_Simple::setVisibleArea (double x0, double y0,
+                                                 double x1, double y1)
+{
+	if (x1 == x0)  x1 = x0 + 0.1;
+	if (y1 == y0)  y1 = y0 + 0.1;
+	if (x0 > x1) { double a = x1; x1 = x0; x0 = a; }
+	if (y0 > y1) { double a = y1; y1 = y0; y0 = a; }
+	while (x0 >  360) { x0 -= 360; x1 -= 360; }
+	while (x0 < -360) { x0 += 360; x1 += 360; }
+	if (y0 < -LAT_LIMIT)  y0 = -LAT_LIMIT;
+	if (y1 >  LAT_LIMIT)  y1 =  LAT_LIMIT;
+
+	// Центр берём по меркаторской ординате, а не по широте: иначе при
+	// большом охвате карта уезжает к экватору.
+	double ymid = yToLat ((latToY(y0) + latToY(y1)) / 2.0);
+	setMapPointInScreen ((x0+x1)/2.0, ymid, W/2, H/2);
+
+	double sx = fabs (W / (x1 - x0));
+	double dy = latToY(y1) - latToY(y0);
+	double sy = (dy != 0.0) ? fabs (H / dy) : sx;
+	setScale ((sx < sy) ? sx : sy);
+}
