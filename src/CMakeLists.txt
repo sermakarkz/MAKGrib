@@ -51,6 +51,10 @@ MeteotableOptionsDialog.h
 MultiModelLoader.h
 NomadsLoader.h
 WinHttpFetch.h
+forecast/ForecastSource.h
+forecast/DialogForecastProgress.h
+forecast/NomadsSource.h
+forecast/SourceRegistry.h
 RegularGridded.h
 RegularGriddedPlot.h
 SkewT.h
@@ -105,6 +109,9 @@ MeteotableOptionsDialog.cpp
 MultiModelLoader.cpp
 NomadsLoader.cpp
 WinHttpFetch.cpp
+forecast/NomadsSource.cpp
+forecast/DialogForecastProgress.cpp
+forecast/SourceRegistry.cpp
 SkewT.cpp
 SkewTWindow.cpp
 Terrain.cpp
@@ -124,6 +131,7 @@ install(TARGETS
     ${CMAKE_PROJECT_NAME}
     BUNDLE DESTINATION ${PREFIX_BIN} RUNTIME DESTINATION ${PREFIX_BIN} PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
 
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/forecast)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/util)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/map ${MAP_GENERATED_HEADERS})
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/GUI ${GUI_GENERATED_HEADERS})

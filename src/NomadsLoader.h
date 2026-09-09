@@ -23,8 +23,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <QObject>
 #include <QString>
 
-class QProgressDialog;
-
 //===================================================================
 // Where a download reports to while it runs. The multi-model download
 // drives a QProgressDialog; the ordinary download dialog has a message
@@ -40,22 +38,6 @@ class NomadsProgress
 		virtual void step (int done, int total, qint64 bytes) = 0;
 		// True once the user has asked to stop.
 		virtual bool canceled () = 0;
-};
-
-//-------------------------------------------------------------------
-// Drives a QProgressDialog, advancing from baseValue to baseValue+100.
-class NomadsDialogProgress : public NomadsProgress
-{
-	public:
-		NomadsDialogProgress (QProgressDialog *dialog, int baseValue,
-		                      const QString &label);
-		void message (const QString &text) override;
-		void step (int done, int total, qint64 bytes) override;
-		bool canceled () override;
-	private:
-		QProgressDialog *dlg;
-		int      base;
-		QString  name;
 };
 
 //===================================================================

@@ -18,6 +18,7 @@
 #include "NomadsLoader.h"
 #include "MultiModelLoader.h"
 #include "FileLoaderGRIB.h"
+#include "SourceRegistry.h"
 #include "GribPlot.h"
 #include "GribReader.h"
 #include "DataPointInfo.h"
@@ -178,6 +179,39 @@ int main (int argc, char **argv)
 	        "icon_eu_p06_", x0, y0, x1, y1, 1, 6, dir);
 	check ("refused without touching the network", none.path.isEmpty());
 	check ("and says why", !none.error.isEmpty(), none.error);
+
+	printf ("\n=== 4a. Источники прогноза как сменная деталь ===\n");
+	// Программа разговаривает не с загрузчиком NOAA, а с интерфейсом
+	// источника. Свой сервер добавится классом рядом и строкой в реестре;
+	// этот раздел следит, чтобы связь не разъехалась раньше времени.
+	{
+		SourceRegistry &reg = SourceRegistry::instance ();
+		check ("источник есть", !reg.sources().isEmpty());
+		for (const SourceRegistry::Offer &o : reg.offers())
+			printf ("       %-14s %-34s %s\n",
+			        qPrintable (o.source->name()), qPrintable (o.model.label),
+			        o.model.wave ? "волнение" : "атмосфера");
+
+		ForecastSource *gfs = reg.sourceFor ("gfs_p25_");
+		ForecastSource *w3  = reg.sourceFor ("ww3_p50_");
+		check ("атмосферу кто-то отдаёт", gfs != nullptr);
+		check ("волнение кто-то отдаёт",  w3  != nullptr);
+		// ICON придёт со своего сервера; пока его не отдаёт никто, и это
+		// должно быть честно видно, а не притворяться поддержкой.
+		check ("ICON пока никто не отдаёт", reg.sourceFor("icon_p25_") == nullptr);
+
+		if (gfs != nullptr) {
+			QByteArray buf;
+			ForecastSource::Request rq {"gfs_p25_", x0, y0, x1, y1, 1, 12};
+			ForecastSource::Result r = gfs->fetch (rq, &buf, nullptr);
+			printf ("       через интерфейс: %s, расчёт %s, %d КБ\n",
+			        r.ok ? "получено" : qPrintable(r.error),
+			        qPrintable (r.run), buf.size()/1024);
+			check ("загрузка через интерфейс работает", r.ok, r.error);
+			check ("и это GRIB", buf.startsWith ("GRIB"));
+			check ("источник назвал расчёт", !r.run.isEmpty());
+		}
+	}
 
 	printf ("\n=== 4b. An area too large to pull directly ===\n");
 	// NOAA serves whatever subset it is asked for. The whole world at

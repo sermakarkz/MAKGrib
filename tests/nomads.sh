@@ -21,14 +21,16 @@ OUT="$SRC/build/nomadstest"
 
 cd build/src
 # Линкуем те же объектники, что и приложение, кроме его main().
+# Ищем и во вложенных каталогах: исходники есть не только в src/.
 OBJS=()
-for o in CMakeFiles/MAKGrib.dir/*.o; do
+while IFS= read -r o; do
   case "$o" in *main.cpp.o) continue;; esac
   OBJS+=("$o")
-done
+done < <(find CMakeFiles/MAKGrib.dir -name '*.o' | sort)
 
 /usr/bin/c++ -std=gnu++11 -isysroot "$SDK" -isystem "$SDK/usr/include/c++/v1" -arch arm64 \
-  -I"$SRC/src" -I"$SRC/src/util" -I"$SRC/src/map" -I"$SRC/src/GUI" -I"$SRC/src/g2clib-1.6.0" \
+  -I"$SRC/src" -I"$SRC/src/util" -I"$SRC/src/map" -I"$SRC/src/GUI" \
+  -I"$SRC/src/forecast" -I"$SRC/src/g2clib-1.6.0" \
   -I. -I./GUI -I./map -I./util -F"$QT/lib" \
   -I"$QT/lib/QtCore.framework/Headers"    -I"$QT/lib/QtGui.framework/Headers" \
   -I"$QT/lib/QtWidgets.framework/Headers" -I"$QT/lib/QtNetwork.framework/Headers" \
