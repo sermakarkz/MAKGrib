@@ -17,11 +17,20 @@ OUT="$HOME/android-deps/$ABI"
 WORK="/tmp/android-deps-$ABI"
 
 TOOLS="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+# Дешёвые телефоны до сих пор приходят с 32-битной системой, даже когда
+# железо 64-битное: Redmi 9A — ровно такой случай. Поэтому armeabi-v7a
+# нужен по-настоящему, а не для галочки.
 case "$ABI" in
-  arm64-v8a) TRIPLE=aarch64-linux-android ;;
-  x86_64)    TRIPLE=x86_64-linux-android ;;
+  arm64-v8a)   TRIPLE=aarch64-linux-android ;;
+  armeabi-v7a) TRIPLE=armv7a-linux-androideabi ;;
+  x86_64)      TRIPLE=x86_64-linux-android ;;
   *) echo "неизвестная архитектура: $ABI"; exit 1 ;;
 esac
+
+# configure ждёт классическую тройку, а компилятор у NDK назван с
+# уровнем API в имени.
+CONFIG_HOST="$TRIPLE"
+[ "$ABI" = "armeabi-v7a" ] && CONFIG_HOST=arm-linux-androideabi
 
 export CC="$TOOLS/${TRIPLE}${API}-clang"
 export CXX="$TOOLS/${TRIPLE}${API}-clang++"
@@ -62,7 +71,7 @@ echo "== libpng =="
 if [ ! -f "$OUT/lib/libpng16.a" ]; then
   fetch https://download.sourceforge.net/libpng/libpng-1.6.43.tar.xz libpng-1.6.43
   cd libpng-1.6.43
-  ./configure --host="$TRIPLE" --prefix="$OUT" \
+  ./configure --host="$CONFIG_HOST" --prefix="$OUT" \
               --enable-static --disable-shared --with-pic >/dev/null
   make -s -j"$(( $(nproc) / 2 ))" >/dev/null && make -s install >/dev/null
   cd "$WORK"
@@ -93,7 +102,7 @@ if [ ! -f "$OUT/lib/libnova.a" ]; then
   sed -i 's/gmt = gmtime(&tv\.tv_sec);/{ time_t _t = (time_t) tv.tv_sec; gmt = gmtime(\&_t); }/' \
       src/julian_day.c
   NOCONFIGURE=1 ./autogen.sh >/dev/null 2>&1 || autoreconf -fi >/dev/null 2>&1
-  ./configure --host="$TRIPLE" --prefix="$OUT" \
+  ./configure --host="$CONFIG_HOST" --prefix="$OUT" \
               --enable-static --disable-shared --with-pic >/dev/null
   make -s -j"$(( $(nproc) / 2 ))" >/dev/null && make -s install >/dev/null
   cd "$WORK"
