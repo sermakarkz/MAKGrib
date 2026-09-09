@@ -16,6 +16,7 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ***********************************************************************/
 
+#include <algorithm>
 #include <QTimer>
 
 #include "Astro.h"
@@ -464,7 +465,7 @@ void MeteoTableWidget::createListVisibleGribData ()
 					DataCode(GRB_PRESSURE_MSL,LV_MSL,0).toInt32(), pos++) );
 	}
 	// Sort visible data by position
-	qSort (listVisibleData.begin(), listVisibleData.end(), lessThanMTGribData);
+	std::sort (listVisibleData.begin(), listVisibleData.end(), lessThanMTGribData);
 }
 //-----------------------------------------------------------------
 void MeteoTableWidget::addLine_Isotherm0Height(int lig)

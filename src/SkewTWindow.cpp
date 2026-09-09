@@ -1,4 +1,5 @@
 
+#include <algorithm>
 #include "SkewT.h"
 
 //---------------------------------------------------------------	
@@ -340,7 +341,7 @@ void SkewTWindow::saveFileSYLK (SylkFile &slk)
 		if (allwind.ok() && !allAlts.contains(allwind.hpa))
 			allAlts << allwind.hpa;
 	}
-	qSort (allAlts);
+	std::sort (allAlts.begin(), allAlts.end());
 	
 	col = 1;
 	slk.addCell (lig, col++, "Altitude (hPa)");

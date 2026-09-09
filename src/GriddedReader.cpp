@@ -87,7 +87,7 @@ time_t  GriddedReader::getClosestDateFromNow ()
 // 	pstm = gmtime(&now);
 // 	now = mktime(pstm);
 	
-	time_t utcnow = QDateTime::currentDateTime().toUTC().toTime_t();
+	time_t utcnow = QDateTime::currentDateTimeUtc().toSecsSinceEpoch();
 	return getClosestDateFromDate (utcnow);
 }
 //------------------------------------------------------------

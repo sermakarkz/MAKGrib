@@ -1127,7 +1127,7 @@ void MainWindow::openMeteoDataFile (const QString& fileName, bool automatic)
 		time_t last = 0;
 		if (meteoFileType == DATATYPE_GRIB && forecastHasExpired (&last))
 		{
-			QString when = QDateTime::fromTime_t (last, Qt::UTC)
+			QString when = QDateTime::fromSecsSinceEpoch (last, Qt::UTC)
 			               .toString ("yyyy-MM-dd HH:mm") + " UTC";
 			setCursor (oldcursor);
 			if (automatic) {
@@ -1472,7 +1472,7 @@ void MainWindow::slotFile_AddGRIB ()
 		// screen without saying so.
 		time_t last = 0;
 		if (forecastHasExpired (&last)) {
-			QString when = QDateTime::fromTime_t (last, Qt::UTC)
+			QString when = QDateTime::fromSecsSinceEpoch (last, Qt::UTC)
 			               .toString ("yyyy-MM-dd HH:mm") + " UTC";
 			if (QMessageBox::question (this, tr("Expired forecast"),
 			        tr("File :") + fileName + "\n\n"
@@ -2570,7 +2570,7 @@ void MainWindow::slotMouseClicked(QMouseEvent * e)
 			}
             break;
         }
-        case Qt::MidButton :   // Centre la carte sur le point
+        case Qt::MiddleButton :   // Centre la carte sur le point
             proj->setCentralPixel(e->x(), e->y());
             terre->setProjection(proj);
             break;

@@ -18,6 +18,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #include <QImageWriter>
 #include <QFileDialog>
+#include <QRegularExpression>
 #include <QMessageBox>
 #include <QAbstractEventDispatcher>
 
@@ -249,8 +250,8 @@ void ImageWriter::saveAllImages ()
 					tr("Images (*.jpg *.jpeg)") );
 		if (filename != "") 
 		{
-			QRegExp reg ("(.jpeg$|.jpg$)");
-			reg.setCaseSensitivity(Qt::CaseInsensitive);
+			QRegularExpression reg ("(\\.jpeg$|\\.jpg$)",
+			        QRegularExpression::CaseInsensitiveOption);
 			QString prefix = filename.replace(reg, "");
 			reg.setPattern ("(_$|_\\d\\d\\d$)");
 			prefix = filename.replace(reg, "");

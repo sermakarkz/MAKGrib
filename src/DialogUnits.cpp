@@ -298,7 +298,7 @@ void DialogUnits::slotTimeZoneChanged(int index)
 	QString val = cbTimeZone->itemData(index).toString();
 	if (val == "LOC")
 	{
-		time_t locnow = QDateTime::currentDateTime().toTime_t();
+		time_t locnow = QDateTime::currentDateTime().toSecsSinceEpoch();
     	
     	QString saveTimeZone = Util::getSetting("timeZone", "UTC").toString();
 		Util::setSetting("timeZone",  "UTC", false);
