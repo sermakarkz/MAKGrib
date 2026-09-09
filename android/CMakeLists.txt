@@ -23,7 +23,7 @@ endif()
 # PROJ здесь нет намеренно: он тянет SQLite и базу координатных систем.
 # Остаются проекции на собственной арифметике — Projection_ZYGRIB и
 # Projection_MERCATOR_Simple.
-add_compile_definitions(MAKGRIB_NO_PROJ)
+add_compile_definitions(MAKGRIB_NO_PROJ MAKGRIB_NO_POI)
 
 # Version.h порождается из шаблона, как и в настольной сборке.
 set(VERSION_MAJOR 1)
@@ -64,10 +64,12 @@ set(ENGINE
     ${TOP}/src/util/Settings.cpp     ${TOP}/src/util/Util.cpp
     ${TOP}/src/util/zuFile.cpp       ${TOP}/src/util/Font.cpp
     ${TOP}/src/util/Orthodromie.cpp
-    ${TOP}/src/map/Projection.cpp
+    ${TOP}/src/map/Projection.cpp    ${TOP}/src/map/GshhsReader.cpp
+    ${TOP}/src/map/GshhsRangsReader.cpp ${TOP}/src/map/GisReader.cpp
+    ${TOP}/src/MapDrawer.cpp        ${TOP}/src/LonLatGrid.cpp
 )
 
-qt_add_executable(MAKGrib main.cpp ${ENGINE})
+qt_add_executable(MAKGrib main.cpp AppData.cpp MapView.cpp ${ENGINE})
 
 target_link_libraries(MAKGrib PRIVATE
     Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::Xml
@@ -76,6 +78,22 @@ target_link_libraries(MAKGrib PRIVATE
     ${DEPS}/lib/libnova.a    ${DEPS}/lib/libbz2.a
     z          # zlib берём системную, она есть в самой Android
 )
+
+# Данные внутрь APK. Кладём в assets того каталога, который Qt
+# упаковывает; копию делаем на этапе конфигурации, чтобы в репозитории
+# не заводилось второй копии карт на 23 МБ.
+set(PKG_ASSETS "${CMAKE_CURRENT_SOURCE_DIR}/package/assets/data")
+file(REMOVE_RECURSE "${PKG_ASSETS}")
+file(MAKE_DIRECTORY "${PKG_ASSETS}")
+foreach(part maps gis colors)
+    file(COPY "${TOP}/data/${part}" DESTINATION "${PKG_ASSETS}")
+endforeach()
+# Шрифты нужны Font::loadAllFonts; берём только их, без остального.
+file(COPY "${TOP}/data/fonts/liberation-fonts"
+     DESTINATION "${PKG_ASSETS}/fonts")
+# Из переводов — только русский и английский.
+file(MAKE_DIRECTORY "${PKG_ASSETS}/tr")
+file(COPY "${TOP}/data/tr/xyGrib_ru.qm" DESTINATION "${PKG_ASSETS}/tr")
 
 # OpenSSL: Qt для Android его не кладёт в APK, и без него любое
 # соединение по https обрывается — NOAA становится недостижим.

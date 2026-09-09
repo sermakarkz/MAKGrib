@@ -13,3 +13,5 @@ data/config
 mac_online_installer/packages/org.opengribs.xygrib.core.mac/.DS_Store
 .DS_Store
 *.autosave
+# Копия данных для APK: делается сборкой из data/, в репозитории не нужна.
+android/package/assets/

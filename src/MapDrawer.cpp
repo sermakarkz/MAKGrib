@@ -817,6 +817,7 @@ void MapDrawer::draw_Cartouche_Gridded
 
 
 //===========================================================
+#ifndef MAKGRIB_NO_POI
 QPixmap * MapDrawer::createPixmap_GriddedData ( 
 						time_t date, 
 						bool isEarthMapValid, 
@@ -845,4 +846,5 @@ QPixmap * MapDrawer::createPixmap_GriddedData (
 	pnt.end();
 	return pixmap;
 }
+#endif  // MAKGRIB_NO_POI
 
