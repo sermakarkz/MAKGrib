@@ -64,7 +64,7 @@ if [ ! -f "$OUT/lib/libpng16.a" ]; then
   cd libpng-1.6.43
   ./configure --host="$TRIPLE" --prefix="$OUT" \
               --enable-static --disable-shared --with-pic >/dev/null
-  make -s -j"$(nproc)" >/dev/null && make -s install >/dev/null
+  make -s -j"$(( $(nproc) / 2 ))" >/dev/null && make -s install >/dev/null
   cd "$WORK"
 fi
 echo "  $(ls -la $OUT/lib/libpng16.a | awk '{print $5}') байт"
@@ -78,7 +78,7 @@ if [ ! -f "$OUT/lib/libopenjp2.a" ]; then
         -DANDROID_ABI="$ABI" -DANDROID_PLATFORM="android-$API" \
         -DCMAKE_INSTALL_PREFIX="$OUT" -DCMAKE_BUILD_TYPE=Release \
         -DBUILD_SHARED_LIBS=OFF -DBUILD_CODEC=OFF >/dev/null
-  make -s -j"$(nproc)" >/dev/null && make -s install >/dev/null
+  make -s -j"$(( $(nproc) / 2 ))" >/dev/null && make -s install >/dev/null
   cd "$WORK"
 fi
 echo "  $(ls -la $OUT/lib/libopenjp2.a | awk '{print $5}') байт"
@@ -95,7 +95,7 @@ if [ ! -f "$OUT/lib/libnova.a" ]; then
   NOCONFIGURE=1 ./autogen.sh >/dev/null 2>&1 || autoreconf -fi >/dev/null 2>&1
   ./configure --host="$TRIPLE" --prefix="$OUT" \
               --enable-static --disable-shared --with-pic >/dev/null
-  make -s -j"$(nproc)" >/dev/null && make -s install >/dev/null
+  make -s -j"$(( $(nproc) / 2 ))" >/dev/null && make -s install >/dev/null
   cd "$WORK"
 fi
 echo "  $(ls -la $OUT/lib/libnova.a | awk '{print $5}') байт"

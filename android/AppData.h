@@ -1,0 +1,23 @@
+/**********************************************************************
+MAKGrib для Android — распаковка данных из APK.
+***********************************************************************/
+#ifndef APPDATA_H
+#define APPDATA_H
+
+#include <QString>
+#include <functional>
+
+namespace AppData
+{
+	// Куда всё раскладывается: внутренняя папка приложения.
+	QString dataDir ();
+
+	// Уже разложено?
+	bool ready ();
+
+	// Разложить. report вызывается с процентами, можно передать пустую.
+	using Report = std::function<void(int)>;
+	bool unpack (Report report = Report());
+}
+
+#endif

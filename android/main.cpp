@@ -1,177 +1,196 @@
 /**********************************************************************
-MAKGrib для Android — разведочная сборка.
+MAKGrib для Android.
 
-Задача этого этапа не в красоте, а в том, чтобы доказать: движок
-собирается под ARM, нативные библиотеки линкуются, сеть с шифрованием
-работает, GRIB читается. Всё это видно на одном экране с бегущим
-отчётом. Интерфейс под палец придёт следующим шагом, на этот же движок.
+Один экран: карта во всю площадь и выдвижная полоса снизу. Настольных
+меню, панелей и одиннадцати диалогов здесь нет и не будет — на телефоне
+в них не попасть пальцем.
 ***********************************************************************/
 #include <QApplication>
 #include <QDateTime>
-#include <QPlainTextEdit>
+#include <QDir>
+#include <QLabel>
+#include <QProgressBar>
 #include <QPushButton>
-#include <QScrollBar>
-#include <QStandardPaths>
-#include <QThread>
+#include <QSpinBox>
 #include <QVBoxLayout>
+#include <QHBoxLayout>
 #include <QWidget>
+
+#include "AppData.h"
+#include "MapView.h"
 
 #include "ForecastSource.h"
 #include "SourceRegistry.h"
-#include "GribReader.h"
+#include "Font.h"
 #include "Projection.h"
 #include "Settings.h"
 #include "Util.h"
-#include "zuFile.h"
 
 //---------------------------------------------------------------------
-// Отчёт о ходе загрузки прямо в окно.
-class ScreenProgress : public ForecastProgress
+// Ход загрузки — в полосу и надпись внизу экрана.
+class BarProgress : public ForecastProgress
 {
 	public:
-		explicit ScreenProgress (QPlainTextEdit *v) : view (v), last (-1) {}
-		void message (const QString &t) override { say (t); }
+		BarProgress (QProgressBar *b, QLabel *l) : bar (b), lab (l) {}
+		void message (const QString &t) override
+		{
+			lab->setText (t);
+			QApplication::processEvents ();
+		}
 		void step (int done, int total, qint64 bytes) override
 		{
-			int pc = (total > 0) ? (100*done)/total : 0;
-			if (pc == last)
-				return;                 // не сорим одинаковыми строками
-			last = pc;
-			// В QString::arg удвоенный процент не экранируется, поэтому
-			// знак дописываем отдельно.
-			say (QString("  %1%  %2 КБ").arg(pc).arg(bytes/1024));
+			if (total > 0)
+				bar->setValue ((100*done)/total);
+			lab->setText (QStringLiteral("%1 КБ").arg (bytes/1024));
+			QApplication::processEvents ();
 		}
 		bool canceled () override { return false; }
 	private:
-		void say (const QString &t)
-		{
-			view->appendPlainText (t);
-			view->verticalScrollBar()->setValue (
-			        view->verticalScrollBar()->maximum());
-			QApplication::processEvents ();
-		}
-		QPlainTextEdit *view;
-		int last;
+		QProgressBar *bar;
+		QLabel       *lab;
 };
 
 //---------------------------------------------------------------------
-class Probe : public QWidget
-{
+class Main : public QWidget
+{ Q_OBJECT
 	public:
-		Probe ()
+		Main ()
 		{
-			view = new QPlainTextEdit;
-			view->setReadOnly (true);
-			QFont f = view->font ();
-			f.setPointSize (11);
-			view->setFont (f);
+			map = new MapView;
 
-			bt = new QPushButton (QStringLiteral("Скачать прогноз с NOAA"));
-			bt->setMinimumHeight (72);          // под палец, а не под мышь
-			connect (bt, &QPushButton::clicked, this, &Probe::run);
+			where = new QLabel;
+			where->setStyleSheet ("background: rgba(0,0,0,140); color: white;"
+			                      "padding: 10px; font-size: 16px;");
+			where->setAlignment (Qt::AlignCenter);
+
+			days = new QSpinBox;      days->setRange (1, 10);  days->setValue (3);
+			days->setSuffix (QStringLiteral(" сут"));
+			step = new QSpinBox;      step->setRange (1, 12);  step->setValue (3);
+			step->setSuffix (QStringLiteral(" ч"));
+			for (QSpinBox *s : {days, step}) {
+				s->setMinimumHeight (64);
+				s->setStyleSheet ("font-size: 18px;");
+			}
+
+			load = new QPushButton (QStringLiteral("Скачать на эту область"));
+			load->setMinimumHeight (76);
+			load->setStyleSheet ("font-size: 18px;");
+			connect (load, &QPushButton::clicked, this, &Main::download);
+
+			bar = new QProgressBar;    bar->setRange (0, 100);
+			bar->setTextVisible (false);
+			bar->setMaximumHeight (8);
+			note = new QLabel;
+			note->setStyleSheet ("font-size: 15px;");
+
+			QHBoxLayout *row = new QHBoxLayout;
+			row->addWidget (new QLabel (QStringLiteral("Глубина")));
+			row->addWidget (days, 1);
+			row->addWidget (new QLabel (QStringLiteral("Шаг")));
+			row->addWidget (step, 1);
 
 			QVBoxLayout *lay = new QVBoxLayout (this);
-			lay->addWidget (view, 1);
-			lay->addWidget (bt);
+			lay->setContentsMargins (0, 0, 0, 0);
+			lay->setSpacing (0);
+			lay->addWidget (where);
+			lay->addWidget (map, 1);
+			QWidget *panel = new QWidget;
+			QVBoxLayout *pl = new QVBoxLayout (panel);
+			pl->addLayout (row);
+			pl->addWidget (load);
+			pl->addWidget (bar);
+			pl->addWidget (note);
+			lay->addWidget (panel);
 
-			hello ();
+			connect (map, &MapView::viewChanged, this, &Main::showWhere);
+
+			// Карты лежат в APK; раскладываем при первом запуске.
+			if (!AppData::ready()) {
+				where->setText (QStringLiteral("Раскладываю карты…"));
+				load->setEnabled (false);
+				QApplication::processEvents ();
+				AppData::unpack ([this](int pc) {
+					bar->setValue (pc);
+					QApplication::processEvents ();
+				});
+				load->setEnabled (true);
+			}
+			Settings::findAppDataDir ();
+			Font::loadAllFonts ();
+			map->loadMaps ();
+			showWhere (50.5, 42.0, 0);
+			note->setText (QStringLiteral("Тяните карту пальцем, "
+			                              "щипком меняйте масштаб."));
 		}
 
-	private:
-		void say (const QString &t)
+	private slots:
+		void showWhere (double lon, double lat, double)
 		{
-			view->appendPlainText (t);
-			view->verticalScrollBar()->setValue (
-			        view->verticalScrollBar()->maximum());
-			QApplication::processEvents ();
+			where->setText (QStringLiteral("%1  %2")
+			        .arg (Util::formatLongitude (lon))
+			        .arg (Util::formatLatitude (lat)));
 		}
 
-		void hello ()
+		void download ()
 		{
-			say (QStringLiteral("MAKGrib — разведочная сборка под Android"));
-			say (QStringLiteral("Qt %1, сборка %2")
-			     .arg (qVersion()).arg (QSysInfo::buildAbi()));
-			say (QStringLiteral("устройство: %1 %2")
-			     .arg (QSysInfo::prettyProductName())
-			     .arg (QSysInfo::currentCpuArchitecture()));
-			say ("");
+			// Область — то, что сейчас на экране. Ничего выделять не надо:
+			// на телефоне это и есть самый естественный выбор.
+			double x0, y0, x1, y1;
+			map->projection()->getVisibleArea (&x0, &y0, &x1, &y1);
+			if (x0 > x1) std::swap (x0, x1);
+			if (y0 > y1) std::swap (y0, y1);
 
-			// Проекция без PROJ — та, на которой будет карта.
-			Projection_MERCATOR_Simple m (600, 800, 50.0, 42.0, 20.0);
-			m.setVisibleArea (46, 36, 56, 48);
-			int i, j;  double lon, lat;
-			m.map2screen (50.0, 42.0, &i, &j);
-			m.screen2map (i, j, &lon, &lat);
-			say (QStringLiteral("Меркатор без PROJ: 50.0/42.0 -> %1,%2 -> %3/%4")
-			     .arg(i).arg(j).arg(lon,0,'f',3).arg(lat,0,'f',3));
-
-			for (const SourceRegistry::Offer &o : SourceRegistry::instance().offers())
-				say (QStringLiteral("источник: %1 — %2")
-				     .arg (o.source->name()).arg (o.model.label));
-			say ("");
-			say (QStringLiteral("Нажмите кнопку, чтобы проверить сеть и чтение GRIB."));
-		}
-
-		void run ()
-		{
-			bt->setEnabled (false);
-			view->clear ();
-			// Небольшой квадрат в открытом море: и атмосфера, и волнение.
-			const double x0 = 96, y0 = -42, x1 = 104, y1 = -34;
-
-			ScreenProgress pr (view);
+			load->setEnabled (false);
+			BarProgress pr (bar, note);
 			QByteArray data;
 			QDateTime t0 = QDateTime::currentDateTime ();
+			QStringList trouble;
 
 			for (const char *model : {"gfs_p25_", "ww3_p50_"}) {
 				ForecastSource *src = SourceRegistry::instance().sourceFor (model);
-				if (src == nullptr) {
-					say (QStringLiteral("нет источника для %1").arg (model));
+				if (src == nullptr)
 					continue;
-				}
-				say (QStringLiteral("--- %1 ---").arg (model));
-				ForecastSource::Request rq {model, x0, y0, x1, y1, 1, 12};
+				ForecastSource::Request rq {model, x0, y0, x1, y1,
+				                            days->value(), step->value()};
 				ForecastSource::Result r = src->fetch (rq, &data, &pr);
-				say (r.ok ? QStringLiteral("получено, расчёт %1").arg (r.run)
-				          : QStringLiteral("не вышло: %1").arg (r.error));
+				if (!r.ok)
+					trouble << r.error;
 			}
 
-			say ("");
-			say (QStringLiteral("всего %1 КБ за %2 с").arg (data.size()/1024)
-			     .arg (t0.secsTo (QDateTime::currentDateTime())));
-
 			if (data.size() > 100 && data.startsWith ("GRIB")) {
-				// Пишем во внутреннюю память приложения: разрешений не надо.
-				QString dir = QStandardPaths::writableLocation (
-				        QStandardPaths::AppDataLocation);
-				QDir().mkpath (dir);
-				QString path = dir + "/probe.grb2";
+				QString path = AppData::dataDir() + "/forecast.grb2";
 				QFile f (path);
 				if (f.open (QIODevice::WriteOnly)) {
 					f.write (data);
 					f.close ();
 				}
-				int n = 0;
-				ZUFILE *zf = zu_open (qPrintable(path), "rb", ZU_COMPRESS_AUTO);
-				if (zf != nullptr) {
-					GribReader r;
-					n = r.countGribRecords (zf);
-					zu_close (zf);
-				}
-				say (QStringLiteral("файл: %1").arg (path));
-				say (QStringLiteral("записей GRIB: %1").arg (n));
-				say (n > 0 ? QStringLiteral("ЧТЕНИЕ РАБОТАЕТ")
-				           : QStringLiteral("прочитать не удалось"));
+				bool ok = map->setForecast (path);
+				note->setText (ok
+				    ? QStringLiteral("%1 КБ за %2 с")
+				          .arg (data.size()/1024)
+				          .arg (t0.secsTo (QDateTime::currentDateTime()))
+				    : QStringLiteral("файл получен, но не прочитался"));
 			}
 			else {
-				say (QStringLiteral("данных нет"));
+				note->setText (trouble.isEmpty()
+				    ? QStringLiteral("данных нет")
+				    : trouble.first());
 			}
-			bt->setEnabled (true);
+			bar->setValue (0);
+			load->setEnabled (true);
 		}
 
-		QPlainTextEdit *view;
-		QPushButton    *bt;
+	private:
+		MapView      *map;
+		QLabel       *where;
+		QLabel       *note;
+		QSpinBox     *days;
+		QSpinBox     *step;
+		QPushButton  *load;
+		QProgressBar *bar;
 };
+
+#include "main.moc"
 
 //---------------------------------------------------------------------
 int main (int argc, char **argv)
@@ -181,7 +200,7 @@ int main (int argc, char **argv)
 	QCoreApplication::setApplicationName ("MAKGrib");
 	Settings::initializeSettingsDir ();
 
-	Probe w;
+	Main w;
 	w.setWindowTitle ("MAKGrib");
 	w.showMaximized ();
 	return app.exec ();

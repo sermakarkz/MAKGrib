@@ -70,6 +70,9 @@ friend class Terrain;	// TODO (or not) getters setters
 		
 		void setGeopotentialData (const DataCode &dtc);
 		DataCode getGeopotentialData () {return geopotentialData;}
+// Снимок карты для сохранения и анимации. На телефоне этого нет,
+// а тянет за собой POI с настольным диалогом редактирования.
+#ifndef MAKGRIB_NO_POI
 		
 		QPixmap * createPixmap_GriddedData ( 
 						time_t date, 
@@ -77,6 +80,7 @@ friend class Terrain;	// TODO (or not) getters setters
 						GriddedPlotter *plotter,
 						Projection *proj,
 						const QList<POI*>& lspois );
+#endif
 
         void	initGraphicsParameters  ();
 					
