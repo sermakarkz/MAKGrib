@@ -84,7 +84,8 @@ void IsoLine::drawIsoLineLabels(QPainter &pnt, std::vector <QRect> &overlap,
     int nb = first;
     QString label;
 
-    label = label.sprintf("%d", qRound(value*coef+offset));
+    // QString::sprintf убрали в Qt 6; number() делает то же и короче.
+    label = QString::number (qRound (value*coef+offset));
 
     QPen penText(couleur);
     QFont fontText = Font::getFont(FONT_IsolineLabel);

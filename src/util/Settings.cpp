@@ -563,7 +563,7 @@ bool Settings::findAppDataDir ()
         // in windows binaries it does exist for sure. This will put app data in c:/user/AppData/Roaming...
         dir = QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation));
 #else
-        dir = QDir(QStandardPaths::writableLocation(QStandardPaths::DataLocation));
+        dir = QDir(QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation));
 #endif
         QDir maps = QDir(dir.absolutePath() + "/data/maps");
         QDir gis = QDir(dir.absolutePath() + "/data/gis");
@@ -579,7 +579,7 @@ bool Settings::findAppDataDir ()
     if (path == "")
     {	// second option is to locate app data files in shared area
 
-        slist = QStandardPaths::standardLocations(QStandardPaths::DataLocation);
+        slist = QStandardPaths::standardLocations(QStandardPaths::AppLocalDataLocation);
         foreach (QString str, slist)
         {
             DBGQS("Searching in: " + str);

@@ -63,7 +63,7 @@ if [ ! -f "$OUT/lib/libpng16.a" ]; then
   fetch https://download.sourceforge.net/libpng/libpng-1.6.43.tar.xz libpng-1.6.43
   cd libpng-1.6.43
   ./configure --host="$TRIPLE" --prefix="$OUT" \
-              --enable-static --disable-shared >/dev/null
+              --enable-static --disable-shared --with-pic >/dev/null
   make -s -j"$(nproc)" >/dev/null && make -s install >/dev/null
   cd "$WORK"
 fi
@@ -94,7 +94,7 @@ if [ ! -f "$OUT/lib/libnova.a" ]; then
       src/julian_day.c
   NOCONFIGURE=1 ./autogen.sh >/dev/null 2>&1 || autoreconf -fi >/dev/null 2>&1
   ./configure --host="$TRIPLE" --prefix="$OUT" \
-              --enable-static --disable-shared >/dev/null
+              --enable-static --disable-shared --with-pic >/dev/null
   make -s -j"$(nproc)" >/dev/null && make -s install >/dev/null
   cd "$WORK"
 fi

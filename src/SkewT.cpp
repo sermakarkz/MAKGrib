@@ -446,7 +446,7 @@ void  SkewT::draw_temperatureScale (QPainter &pnt, bool withLabels)
 			pnt.drawLine (i0, j0, i0, j0+4);
 			if (withLabels) {
 				QString txt = QString("%1").arg(temp);
-				pnt.drawText (i0-fmet.width(txt)/2, j0+fh, txt);
+				pnt.drawText (i0-fmet.horizontalAdvance(txt)/2, j0+fh, txt);
 			}
 		}
 		else {  // line starts outside of X axis
@@ -460,14 +460,14 @@ void  SkewT::draw_temperatureScale (QPainter &pnt, bool withLabels)
 				pnt.drawLine (i, j, i-4, j);
 				if (withLabels) {
 					QString txt = QString("%1").arg(temp);
-					pnt.drawText (DX1-fmet.width(txt)-5, j+fh/3, txt);
+					pnt.drawText (DX1-fmet.horizontalAdvance(txt)-5, j+fh/3, txt);
 				}
 			}
 		}
 	}
 	if (withLabels) {
 		QString txt = "°C";
-		pnt.drawText (DX1-fmet.width(txt)-5, H-DY2+fh, txt);
+		pnt.drawText (DX1-fmet.horizontalAdvance(txt)-5, H-DY2+fh, txt);
 	}
 }
 //------------------------------------------------------
@@ -503,7 +503,7 @@ void  SkewT::draw_pressureScale (QPainter &pnt, bool withLabels)
 		}
 	}
 	if (withLabels)
-		pnt.drawText (i1-fmet.width("hPa")-6, DY1-6, "hPa");
+		pnt.drawText (i1-fmet.horizontalAdvance("hPa")-6, DY1-6, "hPa");
 	// intermediate lines
 	pen.setWidthF (0.4);
 	pnt.setPen (pen);
@@ -855,7 +855,7 @@ void  SkewT::draw_linesCAPE (QPainter &pnt)
 void  SkewT::draw_comments (QPainter &pnt)
 {
 	QFontMetrics fmet (pnt.font());
-	double fw = fmet.width ("W");
+	double fw = fmet.horizontalAdvance("W");
 	double fh = fmet.lineSpacing ();
 	pnt.save ();
 	QColor commentsColor = QColor (70,70,70);
@@ -964,7 +964,7 @@ void  SkewT::draw_comments (QPainter &pnt)
 	QString dat = tr("Date: ")+curdate;
 	pnt.drawText (W/2, 2*fh, dat);
 	//-------------------------------------------------------
-    pnt.drawText (W-fmet.width("XyGrib")-5, H-5, "XyGrib");
+    pnt.drawText (W-fmet.horizontalAdvance("XyGrib")-5, H-5, "XyGrib");
 	//-------------------------------------------------------
 	QFont font = pnt.font();
 	font.setFamily ("times");
