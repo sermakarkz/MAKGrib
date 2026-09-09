@@ -25,6 +25,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <QPainter>
 #include <QProgressDialog>
 #include <QMessageBox>
+#include <QFileInfo>
 
 #include "Terrain.h"
 #include "Orthodromie.h"
@@ -83,6 +84,13 @@ Terrain::Terrain (QWidget *parent, Projection *proj, std::shared_ptr<GshhsReader
     //---------------------------------------------------------------
     griddedPlot = nullptr;
     taskProgress = nullptr;
+    activeSlot = -1;
+
+    virtualBoat.readSettings ();
+    routeDrawing = false;
+    routeCursorValid = false;
+    routeCursorLon = routeCursorLat = 0;
+    draggedWaypoint = -1;
 
     //---------------------------------------------------------------
 	updateGraphicsParameters();
@@ -314,6 +322,14 @@ void Terrain::setWaveArrowsType  (int type) {
     }
 }
 //-------------------------------------------------------
+void Terrain::setWaveArrowsTypeTemporary (int type) {
+    if (drawer->showWaveArrowsType != type) {
+        drawer->showWaveArrowsType = type;
+        mustRedraw = true;
+        update();
+    }
+}
+//-------------------------------------------------------
 void Terrain::setMapQuality (int q) {
     indicateWaitingMap();
     if (quality != q) {
@@ -382,12 +398,13 @@ void Terrain::setWindArrowsOnGribGrid (bool b) {
     }
 }
 //-------------------------------------------------------
-void Terrain::setColorMapData (const DataCode &dtc)
+void Terrain::setColorMapData (const DataCode &dtc, bool remember)
 {
 	//DBGQS (DataCodeStr::toString (dtc));
     if (drawer)
     {
-		Util::setSetting ("colorMapData", DataCodeStr::serialize(dtc));
+		if (remember)
+			Util::setSetting ("colorMapData", DataCodeStr::serialize(dtc));
         drawer->setColorMapData (dtc);
         if (griddedPlot!=nullptr && griddedPlot->isReaderOk()) {
 			griddedPlot->setUseJetStreamColorMap (
@@ -660,19 +677,136 @@ bool  Terrain::getGribFileRectangle(double *x0, double *y0, double *x1, double *
 //---------------------------------------------------------
 // Grib files or ...
 //---------------------------------------------------------
-FileDataType Terrain::loadMeteoDataFile (const QString& fileName, bool zoom)
+// Name shown in the model selector: the forecast centre and model the
+// file really comes from ("NOAA-GFS", "DWD-ICON-Global"...), which is far
+// more useful than the file name. Falls back to the file name.
+static QString buildModelName (GriddedPlotter *plot, const QString& fileName)
+{
+	if (plot != nullptr && plot->isReaderOk()) {
+		QStringList names;
+		for (const DataCenterModel &dcm : plot->getReader()->getAllDataCenterModel()) {
+			QString n = DataCodeStr::toString (dcm);
+			if (!n.isEmpty() && !names.contains(n))
+				names << n;
+		}
+		if (!names.isEmpty())
+			return names.join (" + ");
+	}
+	// Wave-only files carry no recognised centre. Their name follows the
+	// download convention YYYYMMDD_HHMMSS_MODEL_RES_CYCLE.grb2, so turn
+	// that into something readable rather than showing the raw file name.
+	QString base = QFileInfo (fileName).completeBaseName();
+	QStringList parts = base.split ('_', Qt::SkipEmptyParts);
+	if (parts.size() >= 4 && parts.at(0).size() == 8) {
+		QStringList tail = parts.mid (2);
+		QString cycle = tail.takeLast();
+		return tail.join (" ") + " " + cycle + "z";
+	}
+	return QFileInfo (fileName).fileName();
+}
+//---------------------------------------------------------
+void Terrain::clearModelSlots ()
+{
+	for (const ModelSlot &s : modelSlots)
+		delete s.plot;
+	modelSlots.clear ();
+	activeSlot = -1;
+	griddedPlot = nullptr;
+}
+//---------------------------------------------------------
+QString Terrain::getModelName (int i) const
+{
+	return (i>=0 && i<modelSlots.size()) ? modelSlots.at(i).name : QString();
+}
+//---------------------------------------------------------
+bool Terrain::modelHasWaves (int i) const
+{
+	if (i < 0 || i >= modelSlots.size())
+		return false;
+	GriddedPlotter *p = modelSlots.at(i).plot;
+	return p != nullptr && p->isReaderOk()
+	    && p->getReader()->hasWaveDataType (GRB_TYPE_NOT_DEFINED);
+}
+//---------------------------------------------------------
+QString Terrain::getModelFileName (int i) const
+{
+	return (i>=0 && i<modelSlots.size()) ? modelSlots.at(i).fileName : QString();
+}
+//---------------------------------------------------------
+bool Terrain::setActiveModel (int i)
+{
+	if (i < 0 || i >= modelSlots.size() || i == activeSlot)
+		return false;
+
+	// Carry the displayed instant over to the new model, so switching
+	// compares the same moment instead of jumping in time.
+	time_t wanted = 0;
+	if (griddedPlot != nullptr && griddedPlot->isReaderOk())
+		wanted = griddedPlot->getCurrentDate ();
+
+	activeSlot  = i;
+	griddedPlot = modelSlots.at(i).plot;
+	currentFileType = DATATYPE_GRIB;
+
+	if (wanted != 0 && griddedPlot != nullptr && griddedPlot->isReaderOk()) {
+		time_t closest = griddedPlot->getReader()->getClosestDateFromDate (wanted);
+		if (closest != 0)
+			griddedPlot->setCurrentDate (closest);
+	}
+
+	// Only the data layer changes; the coastline pixmap stays valid.
+	mustRedraw = true;
+	update();
+	emit modelListChanged ();
+	return true;
+}
+//---------------------------------------------------------
+void Terrain::removeModel (int i)
+{
+	if (i < 0 || i >= modelSlots.size())
+		return;
+	delete modelSlots.at(i).plot;
+	modelSlots.removeAt (i);
+
+	if (modelSlots.isEmpty()) {
+		activeSlot = -1;
+		griddedPlot = nullptr;
+		currentFileType = DATATYPE_NONE;
+	}
+	else {
+		if (activeSlot >= modelSlots.size())
+			activeSlot = modelSlots.size()-1;
+		griddedPlot = modelSlots.at(activeSlot).plot;
+	}
+	mustRedraw = true;
+	update();
+	emit modelListChanged ();
+}
+//---------------------------------------------------------
+FileDataType Terrain::loadMeteoDataFile (const QString& fileName, bool zoom,
+                                         bool keepPrevious)
 {
     indicateWaitingMap();
 	currentFileType = DATATYPE_NONE;
 	bool ok = false;
-	
+
 	taskProgress = new LongTaskProgress (this);
 	assert (taskProgress);
 	taskProgress->continueDownload = true;
-	
-    if (griddedPlot != nullptr) {
-		delete griddedPlot;
-        griddedPlot = nullptr;
+
+    if (!keepPrevious) {
+		clearModelSlots ();
+	}
+	else {
+		// Reloading a file already in a slot replaces that slot.
+		for (int i=0; i<modelSlots.size(); i++) {
+			if (modelSlots.at(i).fileName == fileName) {
+				delete modelSlots.at(i).plot;
+				modelSlots.removeAt (i);
+				break;
+			}
+		}
+		griddedPlot = nullptr;
 	}
 	taskProgress->setMessage (LongTaskMessage::LTASK_OPEN_FILE);
 	taskProgress->setValue (0);
@@ -740,7 +874,24 @@ FileDataType Terrain::loadMeteoDataFile (const QString& fileName, bool zoom)
 	else {
 		//DBG("ERROR: unknown file type");
 	}
-	
+
+	if (ok) {
+		ModelSlot slot;
+		slot.plot     = griddedPlot;
+		slot.fileName = fileName;
+		slot.name     = buildModelName (griddedPlot, fileName);
+		modelSlots.append (slot);
+		activeSlot = modelSlots.size()-1;
+	}
+	else if (!modelSlots.isEmpty()) {
+		// The new file failed: keep showing whatever was already loaded.
+		if (activeSlot < 0 || activeSlot >= modelSlots.size())
+			activeSlot = modelSlots.size()-1;
+		griddedPlot = modelSlots.at(activeSlot).plot;
+		currentFileType = DATATYPE_GRIB;
+	}
+	emit modelListChanged ();
+
 	isSelectionZoneEnCours = false;
 	isDraggingMapEnCours = false;
     selX0 = selY0 = 0;
@@ -777,13 +928,11 @@ GriddedPlotter *Terrain::getGriddedPlotter ()
 //---------------------------------------------------------
 void   Terrain::closeMeteoDataFile()
 {
-    if (griddedPlot != nullptr) {
-		delete griddedPlot;
-        griddedPlot = nullptr;
-	}
+	clearModelSlots ();
 	currentFileType = DATATYPE_NONE;
 	mustRedraw = true;
     update();
+	emit modelListChanged ();
 }
 
 //---------------------------------------------------------
@@ -876,12 +1025,38 @@ void Terrain::leaveEvent (QEvent * e) {
 //printf("leave\n");
 	emit mouseLeave (e);
     setCursor(enterCursor);
+    if (virtualBoat.getHighlight() >= 0) {
+        virtualBoat.setHighlight (-1);
+        update();
+    }
 }
 
 //---------------------------------------------------------
 void  Terrain::keyPressEvent (QKeyEvent *e)
 {
 //printf("Terrain::keyPressEvent\n");
+	if (routeDrawing) {
+		switch (e->key()) {
+			case Qt::Key_Escape :
+				// Abandon the whole route being drawn.
+				virtualBoat.clear ();
+				stopRouteDrawing ();
+				return;
+			case Qt::Key_Backspace :
+			case Qt::Key_Delete :
+				// Take back the last point without leaving the mode.
+				virtualBoat.removeWaypoint (virtualBoat.countWaypoints()-1);
+				update();
+				emit routeDrawingChanged (false);
+				return;
+			case Qt::Key_Return :
+			case Qt::Key_Enter :
+				stopRouteDrawing ();
+				return;
+			default :
+				break;
+		}
+	}
 	keyModifiers = e->modifiers();
     if (keyModifiers == Qt::ControlModifier) {
         setCursor(controlCursor);
@@ -938,8 +1113,65 @@ void Terrain::slotTimerZoomWheel () {
 
 
 //---------------------------------------------------------
+bool Terrain::routeIsEditable () const
+{
+	return virtualBoat.isVisible() && virtualBoat.countWaypoints() > 0;
+}
+//---------------------------------------------------------
+void Terrain::startRouteDrawing ()
+{
+	routeDrawing = true;
+	routeCursorValid = false;
+	virtualBoat.setVisible (true);
+	setCursor (myCrossCursor);
+	update();
+}
+//---------------------------------------------------------
+void Terrain::stopRouteDrawing ()
+{
+	if (!routeDrawing)
+		return;
+	routeDrawing = false;
+	routeCursorValid = false;
+	setCursor (primaryCursor);
+	virtualBoat.writeSettings ();
+	update();
+	emit routeDrawingChanged (true);
+}
+//---------------------------------------------------------
 void Terrain::mousePressEvent (QMouseEvent * e) {
 //printf("press\n");
+    // While the route is being clicked on the map, the mouse belongs to
+    // the route: no zone selection, no map dragging.
+    if (routeDrawing) {
+        if (e->button() == Qt::LeftButton) {
+            double lon, lat;
+            proj->screen2map (e->x(), e->y(), &lon, &lat);
+            virtualBoat.addWaypoint (lon, lat);
+            lastMouseX = e->x();
+            lastMouseY = e->y();
+            update();
+            emit routeDrawingChanged (false);
+        }
+        return;
+    }
+
+    // Grabbing an existing waypoint takes priority over selecting a zone.
+    if (e->button() == Qt::LeftButton && e->modifiers() == Qt::NoModifier
+            && routeIsEditable())
+    {
+        int idx = virtualBoat.findWaypoint (proj, e->x(), e->y());
+        if (idx >= 0) {
+            draggedWaypoint = idx;
+            virtualBoat.setHighlight (idx);
+            setCursor (Qt::ClosedHandCursor);
+            lastMouseX = e->x();
+            lastMouseY = e->y();
+            update();
+            return;
+        }
+    }
+
     if (e->button() == Qt::LeftButton)
     {
         // Début de sélection de zone rectangulaire
@@ -979,9 +1211,26 @@ void Terrain::mousePressEvent (QMouseEvent * e) {
 //---------------------------------------------------------
 void Terrain::mouseReleaseEvent (QMouseEvent * e) {
     double x0, y0, x1, y1;
-    
+
     globalX0 = 0;
     globalY0 = 0;
+
+    if (routeDrawing) {
+        // The right button ends the route. Returning here also keeps the
+        // usual popup menu from appearing over the finished route.
+        if (e->button() == Qt::RightButton)
+            stopRouteDrawing ();
+        return;
+    }
+
+    if (draggedWaypoint >= 0) {
+        draggedWaypoint = -1;
+        setCursor (Qt::OpenHandCursor);
+        virtualBoat.writeSettings ();
+        update();
+        emit routeDrawingChanged (true);   // recompute the track and the table
+        return;                            // a drag is not a click
+    }
 
     if (e->modifiers() == Qt::ControlModifier) {
         setCursor(controlCursor);
@@ -1019,8 +1268,40 @@ void Terrain::mouseReleaseEvent (QMouseEvent * e) {
 }
 
 //---------------------------------------------------------
-void Terrain::mouseMoveEvent (QMouseEvent * e) 
+void Terrain::mouseMoveEvent (QMouseEvent * e)
 {
+    if (routeDrawing) {
+        proj->screen2map (e->x(), e->y(), &routeCursorLon, &routeCursorLat);
+        routeCursorValid = true;
+        lastMouseX = e->x();
+        lastMouseY = e->y();
+        update();          // move the elastic segment
+        emit mouseMoved(e);
+        return;
+    }
+
+    if (draggedWaypoint >= 0) {
+        double lon, lat;
+        proj->screen2map (e->x(), e->y(), &lon, &lat);
+        virtualBoat.setWaypoint (draggedWaypoint, lon, lat);
+        lastMouseX = e->x();
+        lastMouseY = e->y();
+        update();
+        emit routeDrawingChanged (false);
+        emit mouseMoved(e);
+        return;
+    }
+
+    // Show which waypoint the mouse is about to grab.
+    if (routeIsEditable() && !isDraggingMapEnCours && !isSelectionZoneEnCours) {
+        int idx = virtualBoat.findWaypoint (proj, e->x(), e->y());
+        if (idx != virtualBoat.getHighlight()) {
+            virtualBoat.setHighlight (idx);
+            setCursor (idx >= 0 ? Qt::OpenHandCursor : primaryCursor);
+            update();
+        }
+    }
+
     if (isDraggingMapEnCours)
     {
 		// TODO use  tiles to drag map
@@ -1101,6 +1382,7 @@ void Terrain::paintEvent(QPaintEvent *)
     QPainter pnt (this);
     QColor transp;
     int r = 100;
+
     if (!isResizing || !firstDrawingIsDone)
     {
 		firstDrawingIsDone = true;
@@ -1152,6 +1434,12 @@ void Terrain::paintEvent(QPaintEvent *)
         }
 	}
     
+    // The virtual boat is drawn on top of the map and the GRIB data,
+    // at the date currently displayed.
+    virtualBoat.draw (pnt, proj, getCurrentDate());
+    if (routeDrawing && routeCursorValid)
+        virtualBoat.drawRubberBand (pnt, proj, routeCursorLon, routeCursorLat);
+
     if (mustShowSpecialZone) {
 		if (specialZoneX0!=specialZoneX1 && specialZoneY0!=specialZoneY1) {
 			pnt.setPen(QColor(Qt::white));

@@ -532,6 +532,14 @@ void Grib2Record::readAltitude (gribfield *gfld)
     // current levels below sea surface
     else if (surfaceType1==160)
         levelType = LV_BLW_SURF;
+	// Ordered sequence of data (table 4.5). NOAA numbers the swell
+	// components of its wave models this way. XyGrib draws one swell and
+	// looks for it on the surface, so the first component is taken as the
+	// surface record; the others are dropped rather than overwrite it.
+	else if (surfaceType1==241) {
+		levelValue = 0;
+		levelType = (surfaceValue1==1) ? LV_GND_SURF : LV_TYPE_NOT_DEFINED;
+	}
 	// Ignored level types
 	else if (surfaceType1==106)
 		levelType = LV_TYPE_NOT_DEFINED;  // Depth Below Land Surface

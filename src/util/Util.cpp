@@ -30,6 +30,15 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <QFileDialog>
 
 #include "Settings.h"
+#include <atomic>
+#include <thread>
+
+#include <QAtomicInt>
+#include <QElapsedTimer>
+#include <QEventLoop>
+#include <QSslSocket>
+#include <QTimer>
+
 #include "Util.h"
 #include "Version.h"
 
@@ -104,8 +113,51 @@ QString Util::getOpenFileName (QWidget *parent, const QString &caption,
 	return QFileDialog::getOpenFileName (parent, caption, dir, filter);
 }
 //------------------------------------------------------------
+//------------------------------------------------------------
+// 0 — не начинали, 1 — поднимается, 2 — готово, 3 — недоступно
+static QAtomicInt sslState (0);
+
+void Util::startSslWarmup ()
+{
+	if (!sslState.testAndSetOrdered (0, 1))
+		return;
+	// Отдельный поток: сколько бы это ни заняло, интерфейс не встанет.
+	std::thread ([]() {
+		bool ok = false;
+		ok = QSslSocket::supportsSsl ();
+		sslState.storeRelease (ok ? 2 : 3);
+	}).detach ();
+}
+//------------------------------------------------------------
+bool Util::sslReady (int waitMs)
+{
+	startSslWarmup ();
+	if (sslState.loadAcquire() != 1)
+		return sslState.loadAcquire() == 2;
+
+	// Ждём через цикл событий, а не сном: окно продолжает рисоваться,
+	// и кнопка «Стоп» остаётся живой.
+	QElapsedTimer t; t.start ();
+	QEventLoop loop;
+	QTimer tick;
+	QObject::connect (&tick, &QTimer::timeout, [&]() {
+		if (sslState.loadAcquire() != 1 || t.elapsed() >= waitMs)
+			loop.quit ();
+	});
+	tick.start (50);
+	loop.exec ();
+	return sslState.loadAcquire() == 2;
+}
+//------------------------------------------------------------
 QString Util::getServerName ()
 {
+    // Позволяет направить программу на другой сервер, не пересобирая её:
+    // пригодится и для проверки поведения при недоступном сервере, и
+    // когда появится свой.
+    QByteArray env = qgetenv ("MAKGRIB_SERVER");
+    if (!env.isEmpty())
+        return QString::fromLocal8Bit (env);
+
     //return "www.zygrib.org";
     //return "localhost:8081";/// ofer local tests
     return "grbsrv.opengribs.org"; //https://grbsrv.opengribs.org
@@ -388,8 +440,8 @@ QString Util::getDataUnit (const DataCode &dtc)
 		case GRB_PRECIP_RATE  : 
 		case GRB_PRECIP_TOT   : 
 			return tr("mm/h");
-		case GRB_PRESSURE_MSL : 
-			return tr("hPa");
+		case GRB_PRESSURE_MSL :
+			return Util::getSetting("unitsPressure", "hPa").toString();
 		case GRB_WAV_SIG_HT : 
 		case GRB_WAV_WND_HT : 
 		case GRB_WAV_SWL_HT : 
@@ -477,10 +529,18 @@ QString Util::formatPressure (float pasc, bool withUnit, int precision)
     QString unite = Util::getDataUnit (DataCode(GRB_PRESSURE_MSL,LV_MSL,0));
     QString r;
 	if (GribDataIsDef(pasc)) {
-		if (precision > 0)
-            r.sprintf("%.1f", pasc/100.0f);
+		float v;
+		if (unite == "mmHg")        // millimetres of mercury
+			v = pasc / 133.322387415f;
+		else if (unite == "inHg")   // inches of mercury
+			v = pasc / 3386.388f;
+		else                        // hPa, the GRIB's own scale
+			v = pasc / 100.0f;
+		// Mercury readings are quoted to a tenth at most.
+		if (precision > 0 || unite == "inHg")
+			r.sprintf ((unite == "inHg") ? "%.2f" : "%.1f", v);
 		else
-            r.sprintf("%.0f", pasc/100.0f);
+			r.sprintf ("%.0f", v);
 	}
 	return (withUnit) ? r+" "+unite : r;
 }

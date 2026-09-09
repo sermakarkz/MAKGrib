@@ -65,8 +65,22 @@ class FileLoaderGRIB : public QObject, FileLoader
             );
         void stop();
         void abort();
-        
+
+        // Called by the NOAA progress adapter while the fallback runs.
+        void nomadsMessage (const QString &text);
+        void nomadsStep (int done, int total, qint64 bytes);
+        bool nomadsCanceled () const   {return downloadError;}
+
     private:
+        // Enough of the request to put it to NOAA instead when the
+        // OpenGribs server refuses to prepare the file.
+        QString reqAtmCode, reqWaveCode;
+        double  reqX0, reqY0, reqX1, reqY1;
+        int     reqDays, reqInterval;
+        // Returns true when the refusal has been dealt with here, either
+        // by delivering the data or by reporting a considered error.
+        bool    tryNomads (const QString &serverMessage);
+
 		QString scriptpath;
 		QString scriptname;
 //		QString scriptstock;
@@ -86,9 +100,14 @@ class FileLoaderGRIB : public QObject, FileLoader
 		QNetworkReply *reply_step1;
 		QNetworkReply *reply_step2;
 		bool downloadError;
+		// Ни у одного из двух запросов к серверу OpenGribs не было
+		// ограничения по времени: недоступный сервер означал диалог,
+		// который ждёт вечно и выглядит зависшим.
+		QTimer *stepTimer;
 
     public slots:
         void downloadProgress (qint64 done, qint64 total);
+		void slotStepTimeout ();
 		void slotNetworkError (QNetworkReply::NetworkError);
 		void slotFinished_step1 ();
 		void slotFinished_step2 ();

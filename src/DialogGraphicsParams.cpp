@@ -32,7 +32,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 //===========================================================================
 DialogChooseLang::DialogChooseLang (QWidget *parent, const QString& defaultlang)
 		: DialogBoxColumn ( parent, 1, 
-                            "Welcome to XyGrib",
+                            "Welcome to MAKGrib",
 						    "Choose your language",   
 						   1 )
 {

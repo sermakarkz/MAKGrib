@@ -16,7 +16,9 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ***********************************************************************/
 
+#include <QCoreApplication>
 #include <QDir>
+#include <QFile>
 #include <QStandardPaths>
 #include <QStringList>
 #include <QMessageBox>
@@ -47,7 +49,23 @@ void Settings::initializeSettingsDir ()
 {
 	QString path="";
 	QDir dir;
-	
+
+	// Portable mode. A file named portable.txt next to the program says
+	// "keep everything here": settings, points of interest, downloaded
+	// GRIBs. Nothing is written to the user profile, so the whole folder
+	// can live on a memory stick and be carried between machines.
+	{
+		QDir appDir (QCoreApplication::applicationDirPath());
+		if (appDir.exists("portable.txt")) {
+			QString p2 = appDir.absolutePath() + "/settings";
+			QDir d2 (p2);
+			if (!d2.exists())
+				d2.mkpath (p2);
+			if (Util::isDirWritable (d2))
+				path = p2;
+		}
+	}
+
 	if (path == "")
     {	// first option is to locate setting files in user application settings area
         // this should be OK for all systems
@@ -94,8 +112,19 @@ void Settings::initializeSettingsDir ()
 
 	if (path != "") {
 		GLOB_SettingsDir = path;
-        GLOB_SettingsFilename	 	= GLOB_SettingsDir + "/xygrib.ini";
-        GLOB_SettingsFilename_POI	= GLOB_SettingsDir + "/xygrib_poi.ini";
+        GLOB_SettingsFilename	 	= GLOB_SettingsDir + "/makgrib.ini";
+        GLOB_SettingsFilename_POI	= GLOB_SettingsDir + "/makgrib_poi.ini";
+
+        // Coming from XyGrib, take its settings over once. Someone who
+        // has been using XyGrib keeps their units, colours, fonts and
+        // points of interest instead of starting from nothing.
+        if (!QFile::exists (GLOB_SettingsFilename)
+                && QFile::exists (GLOB_SettingsDir + "/xygrib.ini"))
+            QFile::copy (GLOB_SettingsDir + "/xygrib.ini", GLOB_SettingsFilename);
+        if (!QFile::exists (GLOB_SettingsFilename_POI)
+                && QFile::exists (GLOB_SettingsDir + "/xygrib_poi.ini"))
+            QFile::copy (GLOB_SettingsDir + "/xygrib_poi.ini",
+                         GLOB_SettingsFilename_POI);
 
 		// A. Degwerth [Cassidian] added to make sure that the user dir contains an updated .ini file
 
@@ -114,7 +143,7 @@ void Settings::initializeSettingsDir ()
         GLOB_IniSettings     = nullptr;
         GLOB_IniSettings_POI = nullptr;
 	}
-    GLOB_NatSettings = new QSettings ("xyGrib");
+    GLOB_NatSettings = new QSettings ("MAKGrib");
 			
 }
 
@@ -569,7 +598,20 @@ bool Settings::findAppDataDir ()
     }
 
     if (path == "")
-    {	// third option is to look under application current directory
+    {	// third option is next to the program itself. Checked before the
+        // working directory, because a shortcut can start the program
+        // with the working directory pointing anywhere at all.
+        dir = QDir (QCoreApplication::applicationDirPath());
+        QDir maps = QDir(dir.absolutePath() + "/data/maps");
+        QDir gis = QDir(dir.absolutePath() + "/data/gis");
+        if (maps.exists() && gis.exists()) {
+            path = dir.absolutePath();
+            Settings::setUserSetting("appDataDir", path);
+        }
+    }
+
+    if (path == "")
+    {	// fourth option is to look under application current directory
         dir = QDir::current();
         DBGQS("Searching in current dir: " + dir.absolutePath());
         QDir maps = QDir(dir.absolutePath() + "/data/maps");

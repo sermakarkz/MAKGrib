@@ -75,6 +75,10 @@ DialogUnits::DialogUnits (QWidget *parent) : DialogBoxBase (parent)
     ind = (tunit=="") ? 0 : cbTempUnit->findData(tunit);
     cbTempUnit->setCurrentIndex( ind );
 
+    tunit = Util::getSetting("unitsPressure", "").toString();
+    ind = (tunit=="") ? 0 : cbPressureUnit->findData(tunit);
+    cbPressureUnit->setCurrentIndex( (ind<0) ? 0 : ind );
+
     tunit = Util::getSetting("unitsPosition", "").toString();
     ind = (tunit=="") ? 0 : cbPositionUnit->findData(tunit);
     cbPositionUnit->setCurrentIndex( ind );
@@ -120,6 +124,8 @@ void DialogUnits::slotBtOK()
     Util::setSetting("unitsCurrentSpeed", cb->itemData(cb->currentIndex()).toString(), false);
     cb = cbTempUnit;
     Util::setSetting("unitsTemp",      cb->itemData(cb->currentIndex()).toString(), false);
+    cb = cbPressureUnit;
+    Util::setSetting("unitsPressure",  cb->itemData(cb->currentIndex()).toString(), false);
     cb = cbPositionUnit;
     Util::setSetting("unitsPosition",  cb->itemData(cb->currentIndex()).toString(), false);
     cb = cbDistanceUnit;
@@ -192,6 +198,16 @@ QFrame *DialogUnits::createFrameGui(QWidget *parent)
     cbTempUnit->addItem( tr("°K"),  "°K");
     cbTempUnit->setMinimumWidth (sizemin);
     lay->addWidget( cbTempUnit, lig,1, Qt::AlignLeft);
+    //-------------------------
+    lig ++;
+    label = new QLabel(tr("Pressure :"), frm);
+    lay->addWidget( label,    lig,0, Qt::AlignRight);
+    cbPressureUnit = new QComboBox(this);
+    cbPressureUnit->addItem( tr("hPa"),  "hPa");
+    cbPressureUnit->addItem( tr("mmHg"), "mmHg");
+    cbPressureUnit->addItem( tr("inHg"), "inHg");
+    cbPressureUnit->setMinimumWidth (sizemin);
+    lay->addWidget( cbPressureUnit, lig,1, Qt::AlignLeft);
     //-------------------------
     lig ++;
     label = new QLabel(tr("Distances :"), frm);

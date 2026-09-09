@@ -1,11 +1,13 @@
 cmake_minimum_required (VERSION 3.1.0)
-project (XyGrib)
+# MAKGrib - a fork of XyGrib (opengribs/XyGrib), GPL-3.0-or-later.
+# See NOTICE-FORK.md for what was changed and by whom.
+project (MAKGrib)
 set(VERSION_MAJOR 1)
-set(VERSION_MINOR 2)
-set(VERSION_PATCH 7)
+set(VERSION_MINOR 1)
+set(VERSION_PATCH 0)
 
 set(XYGRIB_VERSION "${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_PATCH}")
-set(XYGRIB_VERSION_DATE "2019-07-19")
+set(XYGRIB_VERSION_DATE "2026-09-09")
 
 option(GNU_PACKAGE "Install into GNU standard directories" OFF)
 option(GEN_TRANSLATIONS "Generate translations" ON)
@@ -233,7 +235,7 @@ endif()
 # macOS bundle parameters
 set_target_properties(${PROJECT_NAME} PROPERTIES MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/cmake/MacOSXBundleInfo.plist.in")
 set_target_properties(${PROJECT_NAME} PROPERTIES MACOSX_BUNDLE_INFO_STRING "${PROJECT_NAME}")
-set_target_properties(${PROJECT_NAME} PROPERTIES MACOSX_BUNDLE_ICON_FILE "xyGrib.icns")
+set_target_properties(${PROJECT_NAME} PROPERTIES MACOSX_BUNDLE_ICON_FILE "makgrib.icns")
 set_target_properties(${PROJECT_NAME} PROPERTIES MACOSX_BUNDLE_GUI_IDENTIFIER "${PROJECT_NAME}")
 set_target_properties(${PROJECT_NAME} PROPERTIES MACOSX_BUNDLE_LONG_VERSION_STRING "${XYGRIB_VERSION}")
 set_target_properties(${PROJECT_NAME} PROPERTIES MACOSX_BUNDLE_BUNDLE_NAME "${PROJECT_NAME}")
@@ -247,8 +249,8 @@ install(DIRECTORY data DESTINATION ${PREFIX_PKGDATA}
         PATTERN "Makefile" EXCLUDE
         PATTERN "cmake_install.cmake" EXCLUDE)
 if(GNU_PACKAGE)
-    install(FILES debian/xygrib.desktop
+    install(FILES debian/makgrib.desktop
             DESTINATION ${CMAKE_INSTALL_FULL_DATADIR}/applications)
-    install(FILES debian/xygrib.png
+    install(FILES debian/makgrib.png
             DESTINATION ${CMAKE_INSTALL_FULL_DATADIR}/pixmaps)
 endif()

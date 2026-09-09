@@ -799,9 +799,9 @@ void MapDrawer::draw_Cartouche_Gridded
 			}
 		}
 		//--------------------------------------------------
-        // Signature XyGrib (coin bas droite)
+        // Signature (coin bas droite)
 		//--------------------------------------------------
-        QString sign = tr("XyGrib");
+        QString sign = tr("MAKGrib");
         pnt.setFont(fontsign);
 		w = fmsign.width(sign)+5;
 		dy = fontsign.pointSize()+1;

@@ -26,6 +26,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <cmath>
 
 #include "FileLoaderGRIB.h"
+#include "NomadsLoader.h"
 #include "Util.h"
 #include "Version.h"
 
@@ -39,6 +40,9 @@ FileLoaderGRIB::FileLoaderGRIB (QNetworkAccessManager *manager, QWidget *parent)
     reply_step1 = nullptr;
     reply_step2 = nullptr;
     scriptpath = "/";
+	stepTimer = new QTimer (this);
+	stepTimer->setSingleShot (true);
+	connect (stepTimer, SIGNAL(timeout()), this, SLOT(slotStepTimeout()));
 }
 //-------------------------------------------------------------------------------
 FileLoaderGRIB::~FileLoaderGRIB () 
@@ -56,6 +60,7 @@ FileLoaderGRIB::~FileLoaderGRIB ()
 //-------------------------------------------------------------------------------
 void FileLoaderGRIB::stop () 
 {
+	stepTimer->stop ();
 	if (reply_step1) {
 		reply_step1->close ();
 		downloadError = true;
@@ -69,6 +74,7 @@ void FileLoaderGRIB::stop ()
 //-------------------------------------------------------------------------------
 void FileLoaderGRIB::abort ()
 {
+	stepTimer->stop ();
 	if (reply_step1) {
 		reply_step1->abort ();
 		downloadError = true;
@@ -236,6 +242,14 @@ void FileLoaderGRIB::getGribFile(
 
 //    QString runCycle = Util::getSetting("downloadRunCycle", "last").toString().toLower();
     //strbuf.clear();
+    // Kept for the NOAA fallback below: the same area and depth have to
+    // be asked for again if the OpenGribs server refuses.
+    reqAtmCode  = amod;
+    reqWaveCode = wmod;
+    reqX0 = x0;  reqY0 = y0;  reqX1 = x1;  reqY1 = y1;
+    reqDays = days;
+    reqInterval = interval;
+
     if (!(parameters == "" && waveParams == ""))
     {
         step = 1;
@@ -269,6 +283,9 @@ void FileLoaderGRIB::getGribFile(
 
         QNetworkRequest request = Util::makeNetworkRequest ("http://"+Util::getServerName()+page);
 		reply_step1 = networkManager->get (request);
+		// Сервер готовит файл небыстро, но не бесконечно. Если за это
+		// время он не ответил ничего — его нет, и ждать нечего.
+		stepTimer->start (45000);
 		connect (reply_step1, SIGNAL(downloadProgress (qint64,qint64)), 
 				 this, SLOT(downloadProgress (qint64,qint64)));
 		connect (reply_step1, SIGNAL(error(QNetworkReply::NetworkError)),
@@ -286,7 +303,19 @@ void FileLoaderGRIB::slotNetworkError (QNetworkReply::NetworkError /*err*/)
 {
 	if (! downloadError) {
 		if (sender() == reply_step1) {
-			emit signalGribLoadError (reply_step1->errorString());
+			// До сервера не достучались вовсе. Это ровно тот случай, ради
+			// которого делался запасной путь, — не ошибка, а повод пойти
+			// за данными к NOAA.
+			stepTimer->stop ();
+			QString msg = tr("The OpenGribs server is not answering.")
+			            + " (" + reply_step1->errorString() + ")";
+			QPointer<FileLoaderGRIB> alive (this);
+			bool handled = tryNomads (msg);
+			if (alive.isNull())
+				return;
+			if (handled)
+				return;
+			emit signalGribLoadError (msg);
 			downloadError = true;
 		}
 		else if (sender() == reply_step2) {
@@ -307,9 +336,38 @@ void FileLoaderGRIB::downloadProgress (qint64 done, qint64 total)
 	}
 }
 //-------------------------------------------------------------------------------
+void FileLoaderGRIB::slotStepTimeout ()
+{
+	if (downloadError)
+		return;
+	downloadError = true;              // не даём slotNetworkError дублировать
+	if (reply_step1 != nullptr && !reply_step1->isFinished()) {
+		reply_step1->abort ();
+		// Сервера нет на связи. Это ровно тот случай, ради которого и
+		// делался запасной путь: пробуем взять данные напрямую у NOAA.
+		QString msg = tr("The OpenGribs server is not answering.");
+		downloadError = false;         // tryNomads решит, чем всё кончилось
+		QPointer<FileLoaderGRIB> alive (this);
+		bool handled = tryNomads (msg);
+		if (alive.isNull())
+			return;
+		if (handled)
+			return;
+		downloadError = true;
+		emit signalGribLoadError (msg);
+		return;
+	}
+	if (reply_step2 != nullptr && !reply_step2->isFinished()) {
+		reply_step2->abort ();
+		emit signalGribLoadError (tr("The download stopped: no answer from "
+		                             "the server."));
+	}
+}
+//-------------------------------------------------------------------------------
 void FileLoaderGRIB::slotFinished_step1 ()
 {
 DBG("slotFinished_step1");
+	stepTimer->stop ();
 	if (!downloadError) {
 		//-------------------------------------------
         // Back from step 1: preparing the file
@@ -331,10 +389,19 @@ DBG("slotFinished_step1");
 
         }else{ // message contains only the error message
             QString m = jsondata["message"].toString();
-//            QMessageBox::warning(parent, tr("Information"), m);
+            reply_step1->close();
+            // The OpenGribs server has been out for days at a time (issue
+            // #326). NOAA keeps publishing GFS and its wave model, so for
+            // those the file can still be built, straight from NOMADS.
+            // tryNomads() reports its own outcome, good or bad.
+            QPointer<FileLoaderGRIB> alive (this);
+            bool handled = tryNomads (m);
+            if (alive.isNull())
+                return;                 // cancelled: this object is gone
+            if (handled)
+                return;
             emit signalGribLoadError(m);
             downloadError = true;
-            reply_step1->close();
         }
 
 		//-------------------------------------------------------------
@@ -349,6 +416,7 @@ DBG("slotFinished_step1");
 			QNetworkRequest request;
             request.setUrl (QUrl(fileName));
             reply_step2 = networkManager->get (request);
+            stepTimer->start (300000);
 			connect (reply_step2, SIGNAL(downloadProgress (qint64,qint64)), 
 					 this, SLOT(downloadProgress (qint64,qint64)));
 			connect (reply_step2, SIGNAL(error(QNetworkReply::NetworkError)),
@@ -364,7 +432,8 @@ DBG("slotFinished_step1");
 //-------------------------------------------------------------------------------
 void FileLoaderGRIB::slotFinished_step2 ()
 {
-// DBG("slotFinished_step2");		
+// DBG("slotFinished_step2");
+	stepTimer->stop ();
 	if (!downloadError) {
 		step = 1000;
 		arrayContent = reply_step2->readAll ();
@@ -386,3 +455,124 @@ void FileLoaderGRIB::slotFinished_step2 ()
 	}
 }
 
+
+//-------------------------------------------------------------------------------
+// The NOAA fallback
+//-------------------------------------------------------------------------------
+// Reports the download to the dialog that owns this loader.
+namespace {
+class GribDialogProgress : public NomadsProgress
+{
+	public:
+		explicit GribDialogProgress (FileLoaderGRIB *o) : owner (o) {}
+		void message (const QString &text) override
+		    { owner->nomadsMessage (text); }
+		void step (int done, int total, qint64 bytes) override
+		    { owner->nomadsStep (done, total, bytes); }
+		bool canceled () override
+		    { return owner->nomadsCanceled(); }
+	private:
+		FileLoaderGRIB *owner;
+};
+}
+//-------------------------------------------------------------------------------
+void FileLoaderGRIB::nomadsMessage (const QString &text)
+{
+	emit signalGribSendMessage ("NOAA — " + text);
+}
+//-------------------------------------------------------------------------------
+void FileLoaderGRIB::nomadsStep (int done, int total, qint64 bytes)
+{
+	// The dialog's bar is fed bytes, and shows a transfer rate from them.
+	// Only a rough total is knowable before the end, so it is scaled from
+	// what has arrived so far.
+	qint64 guess = (done > 0) ? bytes*total/done : bytes;
+	emit signalGribReadProgress (2, int(bytes), int(qMax (guess, bytes+1)));
+}
+//-------------------------------------------------------------------------------
+bool FileLoaderGRIB::tryNomads (const QString &serverMessage)
+{
+	bool wantAtm  = (!reqAtmCode.isEmpty()  && reqAtmCode  != "none");
+	bool wantWave = (!reqWaveCode.isEmpty() && reqWaveCode != "none");
+	bool canAtm   = wantAtm  && NomadsLoader::covers (reqAtmCode);
+	bool canWave  = wantWave && NomadsLoader::covers (reqWaveCode);
+
+	if (!canAtm && !canWave)
+		return false;              // nothing here NOAA could stand in for
+
+	// Half a request is not the request. Handing back only the waves when
+	// an ICON atmosphere was asked for would quietly change the answer,
+	// so say what NOAA can do instead and let the choice be made again.
+	if ((wantAtm && !canAtm) || (wantWave && !canWave)) {
+		emit signalGribLoadError (serverMessage + "\n\n"
+		        + tr("Only GFS and WW3 can be taken straight from NOAA. "
+		             "Select those two to download while the server is down."));
+		downloadError = true;
+		return true;
+	}
+
+	emit signalGribSendMessage (
+	        tr("The OpenGribs server is not delivering — asking NOAA directly..."));
+	emit signalGribStartLoadData ();
+
+	GribDialogProgress bar (this);
+	arrayContent.clear ();
+	QStringList notes;
+	QString name, usedRun;
+
+	if (canAtm) {
+		NomadsLoader::Outcome o = NomadsLoader::fetchInto (&arrayContent,
+		        reqAtmCode, reqX0, reqY0, reqX1, reqY1,
+		        reqDays, reqInterval, &bar);
+		if (!o.ok) {
+			emit signalGribLoadError (serverMessage + "\n\nNOAA: " + o.error);
+			downloadError = true;
+			return true;
+		}
+		name = o.name;
+		usedRun = o.run;
+		if (o.truncated)
+			notes << o.error;
+	}
+
+	if (canWave) {
+		// Appended to the same buffer: a GRIB file is its messages end to
+		// end, so atmosphere and waves travel together as one file.
+		NomadsLoader::Outcome o = NomadsLoader::fetchInto (&arrayContent,
+		        reqWaveCode, reqX0, reqY0, reqX1, reqY1,
+		        reqDays, reqInterval, &bar);
+		if (!o.ok) {
+			if (!canAtm) {
+				emit signalGribLoadError (serverMessage + "\n\nNOAA: " + o.error);
+				downloadError = true;
+				return true;
+			}
+			notes << tr("no sea state from NOAA") + ": " + o.error;
+		}
+		else {
+			name = name.isEmpty() ? o.name
+			                      : QString(name).replace ("GFS_", "GFS+WAVE_");
+			if (usedRun.isEmpty())
+				usedRun = o.run;
+			if (o.truncated)
+				notes << o.error;
+		}
+	}
+
+	if (arrayContent.size() < 100) {
+		emit signalGribLoadError (serverMessage + "\n\nNOAA: "
+		        + tr("NOAA returned nothing usable"));
+		downloadError = true;
+		return true;
+	}
+
+	// Naming the run makes it checkable at a glance that this really is
+	// today's forecast and not something left over.
+	QString done = tr("Taken from NOAA") + " — " + tr("run") + " " + usedRun
+	             + QString(", %1 kb").arg (arrayContent.size()/1024);
+	if (!notes.isEmpty())
+		done += " (" + notes.join("; ") + ")";
+	emit signalGribSendMessage (done);
+	emit signalGribDataReceived (&arrayContent, name);
+	return true;
+}

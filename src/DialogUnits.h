@@ -54,6 +54,7 @@ class DialogUnits : public DialogBoxBase
         QComboBox *cbWindSpeedUnit;
         QComboBox *cbCurrentSpeedUnit;
         QComboBox *cbTempUnit;
+        QComboBox *cbPressureUnit;
         QComboBox *cbPositionUnit;
         QComboBox *cbDistanceUnit;
         

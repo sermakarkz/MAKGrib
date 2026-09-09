@@ -115,6 +115,26 @@ public:
 		
     QMenu   *menuSeaState;
     QMenu   *menuWavesArrows;
+
+    //-- Loaded forecast models ----------------------------------
+    QComboBox *cbModels;          // model selector in the toolbar
+    QAction *acFile_AddGRIB;      // load one more model, keeping the others
+    QAction *acFile_DownloadAll;  // fetch every model for this area
+    QAction *acModel_Next;
+    QAction *acModel_Prev;
+    QAction *acModel_Close;
+    QList<QAction*> acModelSelect;   // Ctrl+1 ... Ctrl+9
+
+    //-- Virtual boat --------------------------------------------
+    QMenu   *menuBoat;
+    QAction *acBoat_Draw;
+    QAction *acBoat_Edit;
+    QAction *acBoat_Show;
+    QAction *acBoat_Track;
+    QAction *acBoat_Clear;
+    QAction *ac_SetBoatStart;          // right click popup
+    QAction *ac_BoatInsertWaypoint;    // shown only over a leg
+    QAction *ac_BoatDeleteWaypoint;    // shown only over a waypoint
 		QAction *acView_WaterTempColors;
 		QAction *acView_SigWaveHeight;
 		QAction *acView_MaxWaveHeight;

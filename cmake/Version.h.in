@@ -1,6 +1,15 @@
 /**********************************************************************
-XyGrib: meteorological GRIB file viewer
+MAKGrib: meteorological GRIB file viewer
+Copyright (C) 2026 - MAKGrib contributors
+
+Based on XyGrib (https://github.com/opengribs/XyGrib)
+Copyright (C) 2012-2019 - OpenGribs contributors
+Based on zyGrib
 Copyright (C) 2008-2012 - Jacques Zaninetti - http://www.zygrib.org
+
+Modified in 2026: renamed, virtual boat and route weather added, several
+forecasts loadable at once, direct NOAA NOMADS download when the
+OpenGribs server is unavailable. See NOTICE-FORK.md.
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -25,11 +34,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define XYGRIB_VERSION_DATE  "${XYGRIB_VERSION_DATE}"
 
 #if defined(Q_OS_WIN32)
-    #define XYGRIB_APP_NAME   "XyGrib_win"
+    #define XYGRIB_APP_NAME   "MAKGrib_win"
 #elif defined(Q_OS_MAC)
-    #define XYGRIB_APP_NAME   "XyGrib_mac"
+    #define XYGRIB_APP_NAME   "MAKGrib_mac"
 #else
-    #define XYGRIB_APP_NAME   "XyGrib_unx"
+    #define XYGRIB_APP_NAME   "MAKGrib_unx"
 #endif
 
 // kept for backward compatibility with zGrib
@@ -59,7 +68,7 @@ class Version {
             return QString(XYGRIB_VERSION_DATE);
         }
         static QString getShortName() {
-            return QString( "XyGrib-"+getVersion() );
+            return QString( "MAKGrib-"+getVersion() );
         }
         static QString getCompleteName() {
             return QString( getAppName()+"-"+getVersion() );
