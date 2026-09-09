@@ -66,3 +66,30 @@ EXTRA=()
 for f in "$@"; do [ -f "$f" ] && [ "$f" != "$GRIB" ] && EXTRA+=("$f"); done
 
 QT_QPA_PLATFORM=offscreen "$OUT" "$GRIB" "$SRC/build" "${EXTRA[@]}" 2>&1 | grep -v "^qt\."
+BOAT=${PIPESTATUS[0]}
+
+# Проекция Меркатора без PROJ — отдельная проверка: под Android PROJ не
+# собирается, и вся навигационная карта держится на этом классе.
+cd "$SRC/build/src"
+/usr/bin/c++ -std=gnu++11 -isysroot "$SDK" -isystem "$SDK/usr/include/c++/v1" -arch arm64 \
+  -I"$SRC/src" -I"$SRC/src/util" -I"$SRC/src/map" -I"$SRC/src/GUI" \
+  -I"$SRC/src/forecast" -I"$SRC/src/g2clib-1.6.0" \
+  -I. -I./GUI -I./map -I./util -F"$QT/lib" \
+  -I"$QT/lib/QtCore.framework/Headers"    -I"$QT/lib/QtGui.framework/Headers" \
+  -I"$QT/lib/QtWidgets.framework/Headers" -I"$QT/lib/QtNetwork.framework/Headers" \
+  -I"$QT/lib/QtXml.framework/Headers"     -I"$QT/lib/QtPrintSupport.framework/Headers" \
+  -I"$(brew --prefix libnova)/include" -I"$(brew --prefix proj)/include" \
+  -I"$(brew --prefix openjpeg)/include/openjpeg-2.5" -I/opt/homebrew/include \
+  "$SRC/tests/mercatortest.cpp" "${OBJS[@]}" \
+  g2clib-1.6.0/libg2clib.a GUI/libgui.a util/libutil.a map/libmap.a \
+  "$(brew --prefix libnova)/lib/libnova.a" \
+  "$(brew --prefix openjpeg)/lib/libopenjp2.dylib" \
+  "$(brew --prefix proj)/lib/libproj.dylib" /opt/homebrew/lib/libpng.dylib -lbz2 -lz \
+  -framework QtCore -framework QtGui -framework QtWidgets -framework QtNetwork \
+  -framework QtXml -framework QtPrintSupport \
+  -o "$SRC/build/mercatortest"
+cd "$SRC/build"
+echo
+echo "=== Проекция Меркатора без PROJ ==="
+QT_QPA_PLATFORM=offscreen "$SRC/build/mercatortest" 2>&1 | grep -v "^qt\."
+exit $(( BOAT + ${PIPESTATUS[0]} ))
