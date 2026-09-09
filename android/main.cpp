@@ -58,10 +58,15 @@ class Main : public QWidget
 		{
 			map = new MapView;
 
-			where = new QLabel;
-			where->setStyleSheet ("background: rgba(0,0,0,140); color: white;"
-			                      "padding: 10px; font-size: 16px;");
+			// Координаты — плавающей табличкой поверх карты, а не
+			// полосой над ней: полоса во всю ширину читается как часть
+			// карты и сбивает с толку, когда карта едет, а она стоит.
+			where = new QLabel (map);
+			where->setStyleSheet (
+			    "background: rgba(20,40,60,190); color: white;"
+			    "padding: 8px 16px; font-size: 16px; border-radius: 14px;");
 			where->setAlignment (Qt::AlignCenter);
+			where->setAttribute (Qt::WA_TransparentForMouseEvents);
 
 			days = new QSpinBox;      days->setRange (1, 10);  days->setValue (3);
 			days->setSuffix (QStringLiteral(" сут"));
@@ -92,7 +97,6 @@ class Main : public QWidget
 			QVBoxLayout *lay = new QVBoxLayout (this);
 			lay->setContentsMargins (0, 0, 0, 0);
 			lay->setSpacing (0);
-			lay->addWidget (where);
 			lay->addWidget (map, 1);
 			QWidget *panel = new QWidget;
 			QVBoxLayout *pl = new QVBoxLayout (panel);
@@ -129,6 +133,10 @@ class Main : public QWidget
 			where->setText (QStringLiteral("%1  %2")
 			        .arg (Util::formatLongitude (lon))
 			        .arg (Util::formatLatitude (lat)));
+			where->adjustSize ();
+			// Держим по центру сверху, с отступом от края экрана.
+			where->move ((map->width() - where->width())/2, 14);
+			where->raise ();
 		}
 
 		void download ()

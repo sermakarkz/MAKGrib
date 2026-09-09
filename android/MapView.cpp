@@ -8,6 +8,7 @@ MAKGrib для Android — карта под палец.
 #include <QGestureEvent>
 #include <QPainter>
 #include <QPinchGesture>
+#include <QElapsedTimer>
 #include <QTouchEvent>
 
 #include "GribPlot.h"
@@ -26,8 +27,12 @@ static const double GLIDE_HALFLIFE_MS = 180.0;
 //---------------------------------------------------------------------
 MapView::MapView (QWidget *parent)
 	: QWidget (parent), drawer (nullptr), proj (nullptr), plot (nullptr),
-	  bufferValid (false), dragging (false), pinching (false), pinchStart (1)
+	  bufferValid (false), shift (0, 0), liveZoom (1.0),
+	  dragging (false), pinching (false), pinchStart (1)
 {
+	settle.setSingleShot (true);
+	settle.setInterval (120);
+	connect (&settle, &QTimer::timeout, this, &MapView::settleNow);
 	setAttribute (Qt::WA_AcceptTouchEvents);
 	grabGesture (Qt::PinchGesture);
 	setAutoFillBackground (false);
@@ -130,6 +135,7 @@ void MapView::rebuild ()
 {
 	if (drawer == nullptr)
 		return;
+	QElapsedTimer t; t.start ();
 	buffer = QPixmap (size());
 	QPainter p (&buffer);
 	// Без прогноза — только берег и сетка координат: рисовалка данных
@@ -139,6 +145,18 @@ void MapView::rebuild ()
 	else
 		drawer->draw_GSHHS (p, true, false, proj);
 	bufferValid = true;
+	if (t.elapsed() > 200)
+		qWarning ("перерисовка карты заняла %lld мс", (long long) t.elapsed());
+}
+
+//---------------------------------------------------------------------
+void MapView::settleNow ()
+{
+	shift    = QPointF (0, 0);
+	liveZoom = 1.0;
+	bufferValid = false;
+	announce ();
+	update ();
 }
 
 //---------------------------------------------------------------------
@@ -154,7 +172,24 @@ void MapView::paintEvent (QPaintEvent *)
 	}
 	if (!bufferValid || buffer.size() != size())
 		rebuild ();
+
+	if (shift.isNull() && liveZoom == 1.0) {
+		pnt.drawPixmap (0, 0, buffer);
+		return;
+	}
+	// Жест ещё идёт: показываем ту же картинку сдвинутой и растянутой.
+	// По краям вылезает пустота — закрашиваем цветом моря, чтобы не
+	// мигало чёрным.
+	pnt.fillRect (rect(), QColor(0xB0, 0xD8, 0xE0));
+	pnt.save ();
+	pnt.translate (shift);
+	if (liveZoom != 1.0) {
+		pnt.translate (width()/2.0, height()/2.0);
+		pnt.scale (liveZoom, liveZoom);
+		pnt.translate (-width()/2.0, -height()/2.0);
+	}
 	pnt.drawPixmap (0, 0, buffer);
+	pnt.restore ();
 }
 
 //---------------------------------------------------------------------
@@ -165,7 +200,9 @@ void MapView::panBy (double dx, double dy)
 	double lon, lat;
 	proj->screen2map (width()/2 - int(dx), height()/2 - int(dy), &lon, &lat);
 	proj->setMapPointInScreen (lon, lat, width()/2, height()/2);
-	bufferValid = false;
+	// Буфер не трогаем — просто запоминаем, на сколько уехали.
+	shift += QPointF (dx, dy);
+	settle.start ();
 	update ();
 }
 
@@ -180,7 +217,7 @@ void MapView::glide ()
 	velocity *= k;
 	if (std::hypot (velocity.x(), velocity.y()) < STOP_SPEED) {
 		glideTimer.stop ();
-		announce ();
+		settleNow ();
 	}
 }
 
@@ -201,12 +238,13 @@ bool MapView::event (QEvent *e)
 			// Масштаб считаем от того, что был в начале щипка: так он не
 			// уползает от накопления мелких погрешностей.
 			proj->setScale (pinchStart * pg->totalScaleFactor());
-			bufferValid = false;
+			liveZoom = proj->getScale() / pinchStart;
+			settle.start ();
 			update ();
 			if (pg->state() == Qt::GestureFinished
 			 || pg->state() == Qt::GestureCanceled) {
 				pinching = false;
-				announce ();
+				settleNow ();
 			}
 			return true;
 		}
@@ -253,7 +291,7 @@ bool MapView::event (QEvent *e)
 		 && std::hypot (velocity.x(), velocity.y()) > STOP_SPEED)
 			glideTimer.start ();
 		else
-			announce ();
+			settleNow ();
 		return true;
 	}
 
