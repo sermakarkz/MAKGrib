@@ -50,6 +50,7 @@ class MapView : public QWidget
 
 	private slots:
 		void  glide ();          // докатывание после отпускания пальца
+		void  settleNow ();      // перерисовать начисто
 
 	private:
 		void  rebuild ();        // перерисовать подложку в буфер
@@ -63,6 +64,12 @@ class MapView : public QWidget
 
 		QPixmap  buffer;         // готовая картинка карты
 		bool     bufferValid;
+		// Пока палец ведёт, картинку не перерисовываем, а сдвигаем:
+		// берег из GSHHS рисуется небыстро, и на слабом телефоне это
+		// разница между «карта едет за пальцем» и «карта вязнет».
+		QPointF  shift;          // на сколько уехали от того, что в буфере
+		double   liveZoom;       // и во сколько раз раздули при щипке
+		QTimer   settle;         // перерисовать, когда всё успокоилось
 
 		// Прокрутка пальцем.
 		bool     dragging;
