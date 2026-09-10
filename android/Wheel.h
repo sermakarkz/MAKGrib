@@ -10,6 +10,8 @@ MAKGrib для Android — колесо выбора числа.
 
 #include <QElapsedTimer>
 #include <QTimer>
+#include <functional>
+
 #include <QWidget>
 
 class Wheel : public QWidget
@@ -19,6 +21,8 @@ class Wheel : public QWidget
 		       const QString &suffix, QWidget *parent = nullptr);
 
 		int  value () const  { return val; }
+		// Своё оформление числа: часовому поясу нужно «UTC+4», а не «4».
+		void setFormatter (std::function<QString(int)> f);
 
 	signals:
 		void valueChanged (int v);
@@ -36,6 +40,7 @@ class Wheel : public QWidget
 		void normalize ();       // перевести накопленный сдвиг в деления
 
 		QString  title, suffix;
+		std::function<QString(int)> fmt;
 		int      lo, hi, val;
 		double   offset;         // сдвиг в точках от текущего деления
 		double   velocity;       // точек в секунду

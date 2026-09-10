@@ -23,7 +23,9 @@ Wheel::Wheel (const QString &title_, int lo_, int hi_, int start,
 	  dragging (false), lastY (0)
 {
 	setFixedHeight (CAPTION + VISIBLE*ITEM);
-	setMinimumWidth (140);
+	// Втроём в строку: на узком экране каждому достаётся около ста
+	// точек, и запас в 140 не давал бы им встать рядом.
+	setMinimumWidth (100);
 	timer.setInterval (16);
 	connect (&timer, &QTimer::timeout, this, &Wheel::animate);
 }
@@ -67,11 +69,19 @@ void Wheel::paintEvent (QPaintEvent *)
 		f.setBold (here);
 		p.setFont (f);
 		p.setPen (QColor (0x1a, 0x2a, 0x3a, here ? 255 : alpha));
-		QString s = here ? QStringLiteral("%1 %2").arg (k).arg (suffix)
-		                 : QString::number (k);
+		QString s = fmt ? fmt (k)
+		                : (here ? QStringLiteral("%1 %2").arg (k).arg (suffix)
+		                        : QString::number (k));
 		p.drawText (QRectF (0, y - ITEM/2.0, width(), ITEM),
 		            Qt::AlignCenter, s);
 	}
+}
+
+//---------------------------------------------------------------------
+void Wheel::setFormatter (std::function<QString(int)> f)
+{
+	fmt = f;
+	update ();
 }
 
 //---------------------------------------------------------------------
