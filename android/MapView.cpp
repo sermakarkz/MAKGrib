@@ -13,6 +13,7 @@ MAKGrib для Android — карта под палец.
 #include <QElapsedTimer>
 #include <QTouchEvent>
 
+#include "ColorScale.h"
 #include "DataDefines.h"
 #include "GribPlot.h"
 #include "GribReader.h"
@@ -53,6 +54,7 @@ MapView::MapView (QWidget *parent)
 	  bufferValid (false), rendering (false), pending (false),
 	  renderScale (0), renderShift (0, 0),
 	  shift (0, 0), residual (0, 0), bufferScale (0),
+	  curType (0), curLevelType (0), curLevelValue (0),
 	  dragging (false), pinching (false), pinchDist (0)
 {
 	settle.setSingleShot (true);
@@ -205,8 +207,40 @@ void MapView::setColorMap (int dataType, int levelType, int levelValue)
 	// Рисовалку трогает фоновый поток; ждём, пока отпустит.
 	waitRender ();
 	drawer->setColorMapData (dtc);
+	curType       = dtc.dataType;
+	curLevelType  = dtc.levelType;
+	curLevelValue = dtc.levelValue;
 	bufferValid = false;
 	update ();
+}
+
+//---------------------------------------------------------------------
+// Границы цветовой шкалы берём у самой палитры: она задана таблицей
+// «от какого значения до какого какой цвет», и её края — это и есть
+// концы шкалы.
+bool MapView::layerRange (double *lo, double *hi) const
+{
+	if (plot == nullptr || curType == 0)
+		return false;
+	ColorScale *cs = plot->getColorScale (
+	                     DataCode (curType, curLevelType, curLevelValue));
+	if (cs == nullptr || cs->colors.empty())
+		return false;
+	if (lo != nullptr)
+		*lo = cs->colors.front()->vmin;
+	if (hi != nullptr)
+		*hi = cs->colors.back()->vmax;
+	return true;
+}
+
+//---------------------------------------------------------------------
+QColor MapView::layerColor (double v) const
+{
+	if (plot == nullptr || curType == 0)
+		return QColor (Qt::transparent);
+	return QColor (plot->getDataCodeColor (
+	                   DataCode (curType, curLevelType, curLevelValue),
+	                   v, true));
 }
 
 //---------------------------------------------------------------------
