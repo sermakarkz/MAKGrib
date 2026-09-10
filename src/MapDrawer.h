@@ -21,6 +21,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #include <QWidget>
 #include <QBitmap>
+#include <QImage>
+#include <QPainter>
+#include <QPixmap>
 
 #include <memory>
 
@@ -34,6 +37,27 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 
 //==============================================================================
+//---------------------------------------------------------------------
+// Промежуточные картинки, в которых собирается карта.
+//
+// На телефоне рисование вынесено в отдельный поток, чтобы жесты не
+// ждали по полсекунды. QPixmap вне главного потока Qt использовать не
+// разрешает, а QImage — разрешает; на настольных сборках остаётся
+// QPixmap, он там быстрее выводится на экран.
+#ifdef MAKGRIB_THREAD_DRAW
+	typedef QImage MapBuf;
+	inline MapBuf *newMapBuf (int w, int h)
+			{ return new QImage (w, h, QImage::Format_RGB32); }
+	inline void blitMapBuf (QPainter &p, MapBuf *b)
+			{ p.drawImage (0, 0, *b); }
+#else
+	typedef QPixmap MapBuf;
+	inline MapBuf *newMapBuf (int w, int h)
+			{ return new QPixmap (w, h); }
+	inline void blitMapBuf (QPainter &p, MapBuf *b)
+			{ p.drawPixmap (0, 0, *b); }
+#endif
+
 class MapDrawer : public QObject
 { Q_OBJECT
 
@@ -85,8 +109,8 @@ friend class Terrain;	// TODO (or not) getters setters
         void	initGraphicsParameters  ();
 					
 	private:
-		QPixmap     *imgEarth;   // images précalculées pour accélérer l'affichage
-		QPixmap     *imgAll;
+		MapBuf      *imgEarth;   // images précalculées pour accélérer l'affichage
+		MapBuf      *imgAll;
 		
 		std::shared_ptr<GshhsReader> gshhsReader;
 		

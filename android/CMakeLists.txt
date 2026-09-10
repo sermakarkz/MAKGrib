@@ -12,7 +12,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 set(CMAKE_AUTOMOC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network Xml)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network Xml Concurrent)
 
 set(TOP "${CMAKE_CURRENT_SOURCE_DIR}/..")
 set(DEPS "$ENV{HOME}/android-deps/${ANDROID_ABI}")
@@ -23,7 +23,7 @@ endif()
 # PROJ здесь нет намеренно: он тянет SQLite и базу координатных систем.
 # Остаются проекции на собственной арифметике — Projection_ZYGRIB и
 # Projection_MERCATOR_Simple.
-add_compile_definitions(MAKGRIB_NO_PROJ MAKGRIB_NO_POI)
+add_compile_definitions(MAKGRIB_NO_PROJ MAKGRIB_NO_POI MAKGRIB_THREAD_DRAW)
 
 # Version.h порождается из шаблона, как и в настольной сборке.
 set(VERSION_MAJOR 1)
@@ -69,10 +69,10 @@ set(ENGINE
     ${TOP}/src/MapDrawer.cpp        ${TOP}/src/LonLatGrid.cpp
 )
 
-qt_add_executable(MAKGrib main.cpp AppData.cpp MapView.cpp ${ENGINE})
+qt_add_executable(MAKGrib main.cpp AppData.cpp MapView.cpp Wheel.cpp ${ENGINE})
 
 target_link_libraries(MAKGrib PRIVATE
-    Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::Xml
+    Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::Xml Qt6::Concurrent
     g2clib
     ${DEPS}/lib/libopenjp2.a ${DEPS}/lib/libpng16.a
     ${DEPS}/lib/libnova.a    ${DEPS}/lib/libbz2.a

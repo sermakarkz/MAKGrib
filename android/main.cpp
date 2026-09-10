@@ -1,23 +1,27 @@
 /**********************************************************************
 MAKGrib для Android.
 
-Один экран: карта во всю площадь и выдвижная полоса снизу. Настольных
-меню, панелей и одиннадцати диалогов здесь нет и не будет — на телефоне
-в них не попасть пальцем.
+Смысл приложения — скачать погоду, пока есть интернет, и смотреть её
+потом. Поэтому на виду ровно одна кнопка, «Скачать», а глубина и шаг
+спрятаны в шторку: их трогают редко. Последний скачанный прогноз
+открывается сам при следующем запуске — в море интернета может уже и
+не быть.
 ***********************************************************************/
 #include <QApplication>
 #include <QDateTime>
 #include <QDir>
+#include <QEvent>
+#include <QFile>
+#include <QHBoxLayout>
 #include <QLabel>
 #include <QProgressBar>
 #include <QPushButton>
-#include <QSpinBox>
 #include <QVBoxLayout>
-#include <QHBoxLayout>
 #include <QWidget>
 
 #include "AppData.h"
 #include "MapView.h"
+#include "Wheel.h"
 
 #include "ForecastSource.h"
 #include "SourceRegistry.h"
@@ -26,8 +30,13 @@ MAKGrib для Android.
 #include "Settings.h"
 #include "Util.h"
 
+// Круглые кнопки поверх карты: палец уверенно попадает примерно в
+// сантиметр, на плотном экране телефона это около семидесяти точек.
+static const int OVER = 76;
+static const int GAP  = 16;
+
 //---------------------------------------------------------------------
-// Ход загрузки — в полосу и надпись внизу экрана.
+// Ход загрузки — в полосу и в табличку поверх карты.
 class BarProgress : public ForecastProgress
 {
 	public:
@@ -35,6 +44,7 @@ class BarProgress : public ForecastProgress
 		void message (const QString &t) override
 		{
 			lab->setText (t);
+			lab->adjustSize ();
 			QApplication::processEvents ();
 		}
 		void step (int done, int total, qint64 bytes) override
@@ -42,6 +52,7 @@ class BarProgress : public ForecastProgress
 			if (total > 0)
 				bar->setValue ((100*done)/total);
 			lab->setText (QStringLiteral("%1 КБ").arg (bytes/1024));
+			lab->adjustSize ();
 			QApplication::processEvents ();
 		}
 		bool canceled () override { return false; }
@@ -58,73 +69,89 @@ class Main : public QWidget
 		{
 			map = new MapView;
 
-			// Координаты — плавающей табличкой поверх карты, а не
-			// полосой над ней: полоса во всю ширину читается как часть
-			// карты и сбивает с толку, когда карта едет, а она стоит.
-			where = new QLabel (map);
-			where->setStyleSheet (
-			    "background: rgba(20,40,60,190); color: white;"
-			    "padding: 8px 16px; font-size: 16px; border-radius: 14px;");
-			where->setAlignment (Qt::AlignCenter);
-			where->setAttribute (Qt::WA_TransparentForMouseEvents);
+			// Координаты и состояние прогноза — плавающими табличками
+			// поверх карты: полоса во всю ширину читалась бы как часть
+			// карты и сбивала с толку, когда карта едет, а она стоит.
+			where = chip ("background: rgba(20,40,60,190); color: white;");
+			stamp = chip ("background: rgba(20,40,60,190); color: white;");
+			stamp->hide ();
 
-			days = new QSpinBox;      days->setRange (1, 10);  days->setValue (3);
-			days->setSuffix (QStringLiteral(" сут"));
-			step = new QSpinBox;      step->setRange (1, 12);  step->setValue (3);
-			step->setSuffix (QStringLiteral(" ч"));
-			for (QSpinBox *s : {days, step}) {
-				s->setMinimumHeight (64);
-				s->setStyleSheet ("font-size: 18px;");
-			}
+			// Единственная кнопка поверх карты — шторка. Масштаб делает
+			// щипок, отдельные «+» и «−» оказались лишними.
+			toggle = overlay ("▲");
+			connect (toggle, &QPushButton::clicked, this, &Main::togglePanel);
+			map->installEventFilter (this);
 
-			load = new QPushButton (QStringLiteral("Скачать на эту область"));
-			load->setMinimumHeight (76);
-			load->setStyleSheet ("font-size: 18px;");
+			days = new Wheel (QStringLiteral("Глубина"), 1, 10, 3,
+			                  QStringLiteral("сут"));
+			step = new Wheel (QStringLiteral("Шаг"), 1, 12, 3,
+			                  QStringLiteral("ч"));
+
+			// Кнопка стоит там, где раньше висела подсказка: место у
+			// нижнего края — единственное, куда палец дотягивается не
+			// перехватывая телефон.
+			load = new QPushButton (QStringLiteral("Скачать погоду"));
+			load->setMinimumHeight (84);
+			load->setStyleSheet ("font-size: 20px; font-weight: bold;"
+			                     "color: white; background: #2d6ea8;"
+			                     "border: none;");
 			connect (load, &QPushButton::clicked, this, &Main::download);
 
 			bar = new QProgressBar;    bar->setRange (0, 100);
 			bar->setTextVisible (false);
-			bar->setMaximumHeight (8);
-			note = new QLabel;
-			note->setStyleSheet ("font-size: 15px;");
+			bar->setMaximumHeight (6);
+			bar->hide ();
 
-			QHBoxLayout *row = new QHBoxLayout;
-			row->addWidget (new QLabel (QStringLiteral("Глубина")));
-			row->addWidget (days, 1);
-			row->addWidget (new QLabel (QStringLiteral("Шаг")));
-			row->addWidget (step, 1);
+			// Шторка: только колёса и только когда её открыли.
+			panel = new QWidget;
+			panel->setStyleSheet ("background: #f2f5f8;");
+			QHBoxLayout *pl = new QHBoxLayout (panel);
+			pl->setContentsMargins (12, 8, 12, 10);
+			pl->setSpacing (12);
+			pl->addWidget (days, 1);
+			pl->addWidget (step, 1);
+			panel->hide ();
 
 			QVBoxLayout *lay = new QVBoxLayout (this);
 			lay->setContentsMargins (0, 0, 0, 0);
 			lay->setSpacing (0);
 			lay->addWidget (map, 1);
-			QWidget *panel = new QWidget;
-			QVBoxLayout *pl = new QVBoxLayout (panel);
-			pl->addLayout (row);
-			pl->addWidget (load);
-			pl->addWidget (bar);
-			pl->addWidget (note);
+			lay->addWidget (bar);
 			lay->addWidget (panel);
+			lay->addWidget (load);
 
 			connect (map, &MapView::viewChanged, this, &Main::showWhere);
 
 			// Карты лежат в APK; раскладываем при первом запуске.
 			if (!AppData::ready()) {
 				where->setText (QStringLiteral("Раскладываю карты…"));
+				where->adjustSize ();
 				load->setEnabled (false);
+				bar->show ();
 				QApplication::processEvents ();
 				AppData::unpack ([this](int pc) {
 					bar->setValue (pc);
 					QApplication::processEvents ();
 				});
+				bar->hide ();
 				load->setEnabled (true);
 			}
 			Settings::findAppDataDir ();
 			Font::loadAllFonts ();
 			map->loadMaps ();
 			showWhere (50.5, 42.0, 0);
-			note->setText (QStringLiteral("Тяните карту пальцем, "
-			                              "щипком меняйте масштаб."));
+			openLast ();
+		}
+
+	protected:
+		// Кнопки лежат на карте и её же дети, поэтому раскладывать их
+		// приходится самим — и заново всякий раз, когда карта меняет
+		// размер: при открытии шторки она становится ниже.
+		bool eventFilter (QObject *o, QEvent *e) override
+		{
+			if (o == map && e->type() == QEvent::Resize)
+				placeOverlays ();
+			return QWidget::eventFilter (o, e);
 		}
 
 	private slots:
@@ -134,9 +161,17 @@ class Main : public QWidget
 			        .arg (Util::formatLongitude (lon))
 			        .arg (Util::formatLatitude (lat)));
 			where->adjustSize ();
-			// Держим по центру сверху, с отступом от края экрана.
-			where->move ((map->width() - where->width())/2, 14);
-			where->raise ();
+			placeChips ();
+		}
+
+		void togglePanel ()
+		{
+			bool show = !panel->isVisible ();
+			panel->setVisible (show);
+			// Треугольники берём крупные (U+25B2/25BC): мелких вариантов
+			// нет в шрифте телефона, вместо них рисуется пустой квадрат.
+			toggle->setText (show ? QStringLiteral("▼")
+			                      : QStringLiteral("▲"));
 		}
 
 		void download ()
@@ -149,7 +184,9 @@ class Main : public QWidget
 			if (y0 > y1) std::swap (y0, y1);
 
 			load->setEnabled (false);
-			BarProgress pr (bar, note);
+			bar->show ();
+			stamp->show ();
+			BarProgress pr (bar, stamp);
 			QByteArray data;
 			QDateTime t0 = QDateTime::currentDateTime ();
 			QStringList trouble;
@@ -165,36 +202,133 @@ class Main : public QWidget
 					trouble << r.error;
 			}
 
+			bool ok = false;
 			if (data.size() > 100 && data.startsWith ("GRIB")) {
-				QString path = AppData::dataDir() + "/forecast.grb2";
-				QFile f (path);
+				// Пишем во временный файл и лишь потом подменяем прежний:
+				// оборванная запись не должна съесть последний прогноз,
+				// который до сих пор показывался.
+				QString path = lastPath ();
+				QString tmp  = path + ".part";
+				QFile f (tmp);
 				if (f.open (QIODevice::WriteOnly)) {
 					f.write (data);
 					f.close ();
+					if (map->setForecast (tmp)) {
+						map->setForecast (QString());
+						QFile::remove (path);
+						ok = QFile::rename (tmp, path) && map->setForecast (path);
+					}
 				}
-				bool ok = map->setForecast (path);
-				note->setText (ok
-				    ? QStringLiteral("%1 КБ за %2 с")
-				          .arg (data.size()/1024)
-				          .arg (t0.secsTo (QDateTime::currentDateTime()))
-				    : QStringLiteral("файл получен, но не прочитался"));
+				QFile::remove (tmp);
 			}
-			else {
-				note->setText (trouble.isEmpty()
-				    ? QStringLiteral("данных нет")
-				    : trouble.first());
-			}
+
+			bar->hide ();
 			bar->setValue (0);
 			load->setEnabled (true);
+			if (ok) {
+				showStamp (QStringLiteral("%1 КБ за %2 с · ")
+				               .arg (data.size()/1024)
+				               .arg (t0.secsTo (QDateTime::currentDateTime())));
+				if (panel->isVisible())
+					togglePanel ();
+			}
+			else {
+				say (trouble.isEmpty() ? QStringLiteral("данных нет")
+				                       : trouble.first(), true);
+			}
 		}
 
 	private:
+		QString lastPath () const
+		{
+			return AppData::dataDir() + "/forecast.grb2";
+		}
+
+		// Прошлый прогноз открывается сам: в море интернета может уже
+		// не быть, а последняя скачанная карта лучше пустого экрана.
+		void openLast ()
+		{
+			QString path = lastPath ();
+			if (QFile::exists (path) && map->setForecast (path))
+				showStamp (QString());
+		}
+
+		// Прогноз без даты опаснее, чем никакого: вчерашний ветер
+		// выглядит на карте точно так же, как сегодняшний.
+		void showStamp (const QString &prefix)
+		{
+			QDateTime shown, last;
+			if (!map->forecastTimes (&shown, &last)) {
+				stamp->hide ();
+				return;
+			}
+			bool stale = last < QDateTime::currentDateTimeUtc ();
+			say (stale
+			     ? QStringLiteral("прогноз устарел · был до %1")
+			           .arg (last.toLocalTime().toString ("dd.MM HH:mm"))
+			     : prefix + QStringLiteral("на %1 · есть до %2")
+			           .arg (shown.toLocalTime().toString ("dd.MM HH:mm"))
+			           .arg (last.toLocalTime().toString ("dd.MM HH:mm")),
+			     stale);
+		}
+
+		void say (const QString &text, bool alarm)
+		{
+			stamp->setStyleSheet (QStringLiteral(
+			    "background: rgba(%1, 200); color: white;"
+			    "padding: 6px 14px; font-size: 15px; border-radius: 12px;")
+			    .arg (alarm ? "150,45,35" : "20,40,60"));
+			stamp->setText (text);
+			stamp->adjustSize ();
+			stamp->show ();
+			placeChips ();
+		}
+
+		QLabel *chip (const QString &colors)
+		{
+			QLabel *l = new QLabel (map);
+			l->setStyleSheet (colors + "padding: 6px 14px;"
+			                           "font-size: 15px; border-radius: 12px;");
+			l->setAlignment (Qt::AlignCenter);
+			l->setAttribute (Qt::WA_TransparentForMouseEvents);
+			return l;
+		}
+
+		void placeChips ()
+		{
+			where->move ((map->width() - where->width())/2, 12);
+			stamp->move ((map->width() - stamp->width())/2,
+			             12 + where->height() + 6);
+			where->raise ();
+			stamp->raise ();
+		}
+
+		QPushButton *overlay (const QString &text)
+		{
+			QPushButton *b = new QPushButton (text, map);
+			b->setFixedSize (OVER, OVER);
+			b->setStyleSheet (
+			    "font-size: 32px; font-weight: bold; color: white;"
+			    "background: rgba(20,40,60,170);"
+			    "border: none; border-radius: 38px;");
+			return b;
+		}
+
+		void placeOverlays ()
+		{
+			toggle->move (GAP, map->height() - OVER - GAP);
+			toggle->raise ();
+			placeChips ();
+		}
+
 		MapView      *map;
 		QLabel       *where;
-		QLabel       *note;
-		QSpinBox     *days;
-		QSpinBox     *step;
+		QLabel       *stamp;
+		Wheel        *days;
+		Wheel        *step;
 		QPushButton  *load;
+		QPushButton  *toggle;
+		QWidget      *panel;
 		QProgressBar *bar;
 };
 

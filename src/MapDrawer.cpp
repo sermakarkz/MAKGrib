@@ -211,7 +211,7 @@ void MapDrawer::draw_Map_Background(bool isEarthMapValid, Projection *proj)
 {
 
     delete imgAll;
-	imgAll = new QPixmap(proj->getW(), proj->getH());
+	imgAll = newMapBuf(proj->getW(), proj->getH());
 	assert(imgAll);
 
 	QPainter pnt(imgAll);
@@ -221,7 +221,7 @@ void MapDrawer::draw_Map_Background(bool isEarthMapValid, Projection *proj)
 	{
 
         delete imgEarth;
-		imgEarth = new QPixmap(proj->getW(), proj->getH());
+		imgEarth = newMapBuf(proj->getW(), proj->getH());
 		assert(imgEarth);
 
         if (gshhsReader.get() != nullptr)
@@ -232,7 +232,7 @@ void MapDrawer::draw_Map_Background(bool isEarthMapValid, Projection *proj)
 			gshhsReader.get()->drawContinents(pnt1, proj, seaColor, landColor);
 		}
 	}
-	pnt.drawPixmap(0,0, *imgEarth);
+	blitMapBuf(pnt, imgEarth);
 }
 //----------------------------------------------------------------------
 void MapDrawer::draw_Map_Foreground(QPainter &pnt, Projection *proj)
@@ -286,7 +286,7 @@ void MapDrawer::draw_GSHHS (
 		draw_Map_Foreground (pnt, proj);
     }
     // Recopie l'image complète
-    pntGlobal.drawPixmap (0,0, *imgAll);
+    blitMapBuf(pntGlobal, imgAll);
 }
 
 //=======================================================================
@@ -325,7 +325,7 @@ void MapDrawer::draw_GSHHS_and_GriddedData (
 			draw_Cartouche_Gridded (pnt, proj, plotter);
     }
     // Recopie l'image complète
-    pntGlobal.drawPixmap(0,0, *imgAll);
+    blitMapBuf(pntGlobal, imgAll);
 }
 //===================================================================
 void MapDrawer::addUsedDataCenterModel (const DataCode &dtc, GriddedPlotter *plotter)
