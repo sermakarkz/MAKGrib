@@ -2,38 +2,39 @@
 MAKGrib для Android.
 
 Смысл приложения — скачать погоду, пока есть интернет, и смотреть её
-потом. Поэтому на виду ровно одна кнопка, «Скачать», а глубина и шаг
-спрятаны в шторку: их трогают редко. Последний скачанный прогноз
-открывается сам при следующем запуске — в море интернета может уже и
-не быть.
+потом. Поэтому карта во весь экран, под ней шкала времени и четыре
+кнопки: листать срок назад и вперёд, настроить и скачать. Настройки
+прячутся в шторку: их трогают редко.
 ***********************************************************************/
 #include <QApplication>
 #include <QDateTime>
 #include <QDir>
 #include <QEvent>
+#include <QFont>
+#include <QTimeZone>
 #include <QFile>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QMouseEvent>
+#include <QPainter>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QVBoxLayout>
 #include <QWidget>
 
 #include "AppData.h"
+#include "LayerBar.h"
 #include "MapView.h"
+#include "TimeBar.h"
 #include "Wheel.h"
 
 #include "ForecastSource.h"
 #include "SourceRegistry.h"
+#include "DataDefines.h"
 #include "Font.h"
 #include "Projection.h"
 #include "Settings.h"
 #include "Util.h"
-
-// Круглые кнопки поверх карты: палец уверенно попадает примерно в
-// сантиметр, на плотном экране телефона это около семидесяти точек.
-static const int OVER = 76;
-static const int GAP  = 16;
 
 //---------------------------------------------------------------------
 // Ход загрузки — в полосу и в табличку поверх карты.
@@ -62,6 +63,62 @@ class BarProgress : public ForecastProgress
 };
 
 //---------------------------------------------------------------------
+// Шапка шторки: за неё её и закрывают — пальцем вниз или касанием по
+// треугольнику. Треугольник рисуем сами: готовые знаки вроде «▼» на
+// Android норовят стать цветным эмодзи.
+class DrawerHandle : public QWidget
+{ Q_OBJECT
+	public:
+		explicit DrawerHandle (QWidget *parent = nullptr) : QWidget (parent)
+		{
+			setFixedHeight (46);
+		}
+
+	signals:
+		void closeAsked ();
+
+	protected:
+		void paintEvent (QPaintEvent *) override
+		{
+			QPainter p (this);
+			p.setRenderHint (QPainter::Antialiasing, true);
+			double cx = width()/2.0, cy = height()/2.0;
+			p.setPen (Qt::NoPen);
+			p.setBrush (QColor (0xc4, 0xd0, 0xdc));
+			p.drawRoundedRect (QRectF (cx-34, cy-11, 68, 5), 3, 3);
+			QPolygonF tri;
+			tri << QPointF (cx-12, cy+1) << QPointF (cx+12, cy+1)
+			    << QPointF (cx, cy+13);
+			p.setBrush (QColor (0x6b, 0x7c, 0x8d));
+			p.drawPolygon (tri);
+		}
+
+		void mousePressEvent (QMouseEvent *e) override
+		{
+			from = e->position().y ();
+			moved = false;
+		}
+
+		void mouseMoveEvent (QMouseEvent *e) override
+		{
+			if (!moved && e->position().y() - from > 40) {
+				moved = true;
+				emit closeAsked ();
+			}
+		}
+
+		void mouseReleaseEvent (QMouseEvent *) override
+		{
+			if (!moved)
+				emit closeAsked ();     // просто касание
+		}
+
+	private:
+		double from = 0;
+		bool   moved = false;
+};
+
+//---------------------------------------------------------------------
 class Main : public QWidget
 { Q_OBJECT
 	public:
@@ -69,17 +126,29 @@ class Main : public QWidget
 		{
 			map = new MapView;
 
-			// Координаты и состояние прогноза — плавающими табличками
-			// поверх карты: полоса во всю ширину читалась бы как часть
-			// карты и сбивала с толку, когда карта едет, а она стоит.
-			where = chip ("background: rgba(20,40,60,190); color: white;");
-			stamp = chip ("background: rgba(20,40,60,190); color: white;");
+			// Единственная надпись поверх карты — срок показанного
+			// прогноза. Координаты тут висели зря: в море и так видно,
+			// где ты, а вот на какой час нарисован ветер — вопрос
+			// первый.
+			stamp = new QLabel (map);
+			stamp->setAlignment (Qt::AlignCenter);
+			stamp->setAttribute (Qt::WA_TransparentForMouseEvents);
+			say (QString(), false);
 			stamp->hide ();
-
-			// Единственная кнопка поверх карты — шторка. Масштаб делает
-			// щипок, отдельные «+» и «−» оказались лишними.
-			toggle = overlay ("▲");
-			connect (toggle, &QPushButton::clicked, this, &Main::togglePanel);
+			// Узкая шторка слоёв у левого края. Открывается язычком —
+			// сама она закрывает часть карты, а на карту смотрят чаще,
+			// чем меняют слой.
+			layers = new LayerBar (map);
+			layers->hide ();
+			connect (layers, &LayerBar::chosen, this, &Main::chooseLayer);
+			tab = new QPushButton (QStringLiteral("|||"), map);
+			tab->setFixedSize (34, 92);
+			tab->setStyleSheet (
+			    "font-size: 15px; font-weight: bold; color: white;"
+			    "border: none; background: rgba(20,40,60,190);"
+			    "border-top-right-radius: 12px;"
+			    "border-bottom-right-radius: 12px;");
+			connect (tab, &QPushButton::clicked, this, &Main::toggleLayers);
 			map->installEventFilter (this);
 
 			days = new Wheel (QStringLiteral("Глубина"), 1, 10, 3,
@@ -87,29 +156,74 @@ class Main : public QWidget
 			step = new Wheel (QStringLiteral("Шаг"), 1, 12, 3,
 			                  QStringLiteral("ч"));
 
-			// Кнопка стоит там, где раньше висела подсказка: место у
-			// нижнего края — единственное, куда палец дотягивается не
-			// перехватывая телефон.
-			load = new QPushButton (QStringLiteral("Скачать погоду"));
-			load->setMinimumHeight (84);
-			load->setStyleSheet ("font-size: 20px; font-weight: bold;"
-			                     "color: white; background: #2d6ea8;"
-			                     "border: none;");
-			connect (load, &QPushButton::clicked, this, &Main::download);
+			// Сроки в GRIB всегда по Гринвичу. По умолчанию показываем в
+			// поясе телефона, но в рейсе он может быть чужим — скажем,
+			// судовое время отличается от того, что стоит в аппарате.
+			int here = QTimeZone::systemTimeZone()
+			               .offsetFromUtc (QDateTime::currentDateTime()) / 3600;
+			tz = Settings::getUserSetting ("displayTimeZone", here).toInt();
+			if (tz < -12 || tz > 14)
+				tz = here;
+			zone = new Wheel (QStringLiteral("Часовой пояс"), -12, 14, tz,
+			                  QString());
+			zone->setFormatter ([](int h) {
+				if (h == 0)  return QStringLiteral("UTC");
+				return QStringLiteral("UTC%1%2")
+				           .arg (h < 0 ? QStringLiteral("−")
+				                       : QStringLiteral("+"))
+				           .arg (qAbs (h));
+			});
+			connect (zone, &Wheel::valueChanged, this, &Main::setZone);
 
 			bar = new QProgressBar;    bar->setRange (0, 100);
 			bar->setTextVisible (false);
 			bar->setMaximumHeight (6);
 			bar->hide ();
 
-			// Шторка: только колёса и только когда её открыли.
+			line = new TimeBar;
+			connect (line, &TimeBar::moved, this, &Main::goToStep);
+
+			// Стрелки берём буквенные, а не «▶»: у геометрических
+			// треугольников на Android эмодзи-начертание, и кнопка
+			// получается оранжевым квадратом.
+			back    = button (QStringLiteral("←"), false);
+			forward = button (QStringLiteral("→"), false);
+			setup   = button (QStringLiteral("Настроить"), false);
+			load    = button (QStringLiteral("Скачать"), true);
+			// Пока прогноза нет, листать нечего.
+			back->setEnabled (false);
+			forward->setEnabled (false);
+			connect (back,    &QPushButton::clicked, this, [this]() { shift (-1); });
+			connect (forward, &QPushButton::clicked, this, [this]() { shift (+1); });
+			connect (setup,   &QPushButton::clicked, this, &Main::togglePanel);
+			connect (load,    &QPushButton::clicked, this, &Main::download);
+
+			buttons = new QWidget;
+			QHBoxLayout *row = new QHBoxLayout (buttons);
+			row->setContentsMargins (0, 0, 0, 0);
+			row->setSpacing (1);
+			row->addWidget (back,    2);
+			row->addWidget (setup,   3);
+			row->addWidget (load,    3);
+			row->addWidget (forward, 2);
+
+			// Шторка: колёса и шапка, за которую её закрывают. Пока она
+			// открыта, кнопки внизу не нужны — шторка встаёт на их место.
 			panel = new QWidget;
 			panel->setStyleSheet ("background: #f2f5f8;");
-			QHBoxLayout *pl = new QHBoxLayout (panel);
-			pl->setContentsMargins (12, 8, 12, 10);
-			pl->setSpacing (12);
-			pl->addWidget (days, 1);
-			pl->addWidget (step, 1);
+			DrawerHandle *handle = new DrawerHandle;
+			connect (handle, &DrawerHandle::closeAsked,
+			         this, &Main::togglePanel);
+			QHBoxLayout *wheels = new QHBoxLayout;
+			wheels->setSpacing (10);
+			wheels->addWidget (days, 1);
+			wheels->addWidget (step, 1);
+			wheels->addWidget (zone, 1);
+			QVBoxLayout *pl = new QVBoxLayout (panel);
+			pl->setContentsMargins (12, 0, 12, 10);
+			pl->setSpacing (4);
+			pl->addWidget (handle);
+			pl->addLayout (wheels);
 			panel->hide ();
 
 			QVBoxLayout *lay = new QVBoxLayout (this);
@@ -118,14 +232,15 @@ class Main : public QWidget
 			lay->addWidget (map, 1);
 			lay->addWidget (bar);
 			lay->addWidget (panel);
-			lay->addWidget (load);
+			lay->addWidget (line);
+			lay->addWidget (buttons);
 
-			connect (map, &MapView::viewChanged, this, &Main::showWhere);
+			connect (map, &MapView::forecastTimeChanged,
+			         this, &Main::showStamp);
 
 			// Карты лежат в APK; раскладываем при первом запуске.
 			if (!AppData::ready()) {
-				where->setText (QStringLiteral("Раскладываю карты…"));
-				where->adjustSize ();
+				say (QStringLiteral("Раскладываю карты…"), false);
 				load->setEnabled (false);
 				bar->show ();
 				QApplication::processEvents ();
@@ -137,41 +252,110 @@ class Main : public QWidget
 				load->setEnabled (true);
 			}
 			Settings::findAppDataDir ();
+			// Названия городов на телефоне мельче, чем на мониторе, а
+			// смотрят на них с вытянутой руки и на качке.
+			Settings::setUserSetting ("FONT_MapCity_1",
+			        QFont ("Liberation Sans", 15, QFont::Bold));
+			Settings::setUserSetting ("FONT_MapCity_2",
+			        QFont ("Liberation Sans", 14, QFont::Bold));
+			Settings::setUserSetting ("FONT_MapCity_3",
+			        QFont ("Liberation Sans", 13, QFont::Normal));
 			Font::loadAllFonts ();
+			// Настройки карты читаются один раз, при создании рисовалки,
+			// поэтому задаём их до загрузки карт. Своего окна настроек
+			// на телефоне нет и не нужно: выбор сделан за штурмана.
+			Settings::setUserSetting ("showCountriesBorders", true);
+			Settings::setUserSetting ("showRivers", true);
+			Settings::setUserSetting ("showCitiesNamesLevel", 2);
+			// Белые стрелки поверх поля скорости не читаются.
+			Settings::setUserSetting ("windArrowsColorForced", "#141414");
 			map->loadMaps ();
-			showWhere (50.5, 42.0, 0);
 			openLast ();
 		}
 
 	protected:
-		// Кнопки лежат на карте и её же дети, поэтому раскладывать их
-		// приходится самим — и заново всякий раз, когда карта меняет
-		// размер: при открытии шторки она становится ниже.
 		bool eventFilter (QObject *o, QEvent *e) override
 		{
-			if (o == map && e->type() == QEvent::Resize)
-				placeOverlays ();
+			if (o == map && e->type() == QEvent::Resize) {
+				placeStamp ();
+				placeLayers ();
+			}
 			return QWidget::eventFilter (o, e);
 		}
 
 	private slots:
-		void showWhere (double lon, double lat, double)
+		void toggleLayers ()
 		{
-			where->setText (QStringLiteral("%1  %2")
-			        .arg (Util::formatLongitude (lon))
-			        .arg (Util::formatLatitude (lat)));
-			where->adjustSize ();
-			placeChips ();
+			layers->setVisible (!layers->isVisible());
+			placeLayers ();
+		}
+
+		// Слой меняется мгновенно: все поля уже лежат в скачанном файле,
+		// докачивать нечего.
+		void chooseLayer (int i)
+		{
+			if (i < 0 || i >= layers->count())
+				return;
+			const LayerBar::Item &it = layers->item (i);
+			map->setColorMap (it.type, it.levelType, it.levelValue);
+			Settings::setUserSetting ("phoneLayer", it.type);
+			layers->hide ();
+			placeLayers ();
 		}
 
 		void togglePanel ()
 		{
+			// Пока настраивают прогноз, ни кнопки, ни шкала времени не
+			// нужны: место лучше отдать карте.
 			bool show = !panel->isVisible ();
 			panel->setVisible (show);
-			// Треугольники берём крупные (U+25B2/25BC): мелких вариантов
-			// нет в шрифте телефона, вместо них рисуется пустой квадрат.
-			toggle->setText (show ? QStringLiteral("▼")
-			                      : QStringLiteral("▲"));
+			buttons->setVisible (!show);
+			line->setVisible (!show);
+		}
+
+		// Листание срока: стрелками по одному шагу.
+		void shift (int d)
+		{
+			int i = map->forecastIndex ();
+			if (i < 0)
+				return;
+			goToStep (i + d);
+		}
+
+		void goToStep (int i)
+		{
+			// Срок выбрали вручную — прежнее показание часов больше не
+			// та точка, от которой считать перевод пояса.
+			wall = QDateTime ();
+			map->showForecastStep (i);
+			line->setIndex (map->forecastIndex());
+		}
+
+		// Пояс меняется в шторке, отзываться должно всё сразу.
+		void setZone (int h)
+		{
+			QDateTime shown;
+			// Показание часов запоминаем до первого поворота колеса и
+			// дальше считаем только от него. Если считать шаг за шагом,
+			// каждый час округляется к ближайшему сроку и возвращается
+			// на место: при трёхчасовом прогнозе колесо крутится, а
+			// картинка стоит.
+			if (!wall.isValid() && map->forecastTimes (&shown, nullptr))
+				wall = shown.addSecs (tz * 3600);
+
+			tz = h;
+			Settings::setUserSetting ("displayTimeZone", h);
+			line->setZone (tz*3600);
+
+			// Час на экране остаётся прежним, а показывается тот срок,
+			// который в новом поясе читается так же. Точного попадания
+			// может не быть: между сроками прогноза ничего нет, и берём
+			// ближайший.
+			if (wall.isValid() && map->hasForecast()) {
+				map->showForecastNear (wall.addSecs (-tz * 3600));
+				line->setIndex (map->forecastIndex());
+			}
+			showStamp ();
 		}
 
 		void download ()
@@ -226,9 +410,9 @@ class Main : public QWidget
 			bar->setValue (0);
 			load->setEnabled (true);
 			if (ok) {
-				showStamp (QStringLiteral("%1 КБ за %2 с · ")
-				               .arg (data.size()/1024)
-				               .arg (t0.secsTo (QDateTime::currentDateTime())));
+				fillLayers ();
+				fillLine ();
+				showStamp ();
 				if (panel->isVisible())
 					togglePanel ();
 			}
@@ -236,6 +420,24 @@ class Main : public QWidget
 				say (trouble.isEmpty() ? QStringLiteral("данных нет")
 				                       : trouble.first(), true);
 			}
+		}
+
+		// Прогноз без даты опаснее, чем никакого: вчерашний ветер
+		// выглядит на карте точно так же, как сегодняшний.
+		void showStamp ()
+		{
+			QDateTime shown, last;
+			if (!map->forecastTimes (&shown, &last)) {
+				stamp->hide ();
+				return;
+			}
+			bool stale = last < QDateTime::currentDateTimeUtc ();
+			// Пояс подписываем всегда: время без пояса на судне — повод
+			// разойтись с прогнозом на несколько часов.
+			say (shown.toOffsetFromUtc (tz*3600).toString ("dd.MM  HH:mm")
+			     + QStringLiteral("  ") + zoneName()
+			     + (stale ? QStringLiteral("  · устарел") : QString()),
+			     stale);
 		}
 
 	private:
@@ -249,86 +451,139 @@ class Main : public QWidget
 		void openLast ()
 		{
 			QString path = lastPath ();
-			if (QFile::exists (path) && map->setForecast (path))
-				showStamp (QString());
+			if (QFile::exists (path) && map->setForecast (path)) {
+				fillLayers ();
+				fillLine ();
+				showStamp ();
+			}
 		}
 
-		// Прогноз без даты опаснее, чем никакого: вчерашний ветер
-		// выглядит на карте точно так же, как сегодняшний.
-		void showStamp (const QString &prefix)
+		QString zoneName () const
 		{
-			QDateTime shown, last;
-			if (!map->forecastTimes (&shown, &last)) {
-				stamp->hide ();
-				return;
+			if (tz == 0)
+				return QStringLiteral("UTC");
+			return QStringLiteral("UTC%1%2")
+			           .arg (tz < 0 ? QStringLiteral("−") : QStringLiteral("+"))
+			           .arg (qAbs (tz));
+		}
+
+		// Предлагаем только то, что есть в файле: пустой слой на экране
+		// выглядит как поломка, а не как отсутствие данных.
+		void fillLayers ()
+		{
+			struct Cand { int type, lt, lv; const char *name; };
+			// Уровни взяты из того, что реально приходит от NOAA:
+			// температура поверхности читается как «температура воды»,
+			// облачность лежит на уровне всей атмосферы.
+			static const Cand all[] = {
+				{ GRB_PRV_WIND_XY2D,    LV_ABOV_GND, 10, "Ветер"  },
+				{ GRB_WIND_GUST,        -1,          -1, "Порыв"  },
+				{ GRB_PRV_WAV_SIG,      -1,          -1, "Волны"  },
+				{ GRB_TEMP,             LV_ABOV_GND,  2, "Воздух" },
+				{ GRB_WTMP,             -1,          -1, "Вода"   },
+				{ GRB_PRV_DIFF_TEMPDEW, LV_ABOV_GND,  2, "Туман"  },
+				{ GRB_HUMID_REL,        LV_ABOV_GND,  2, "Влаж."  },
+				{ GRB_CLOUD_TOT,        -1,          -1, "Облака" },
+				{ GRB_PRECIP_TOT,       -1,          -1, "Дождь"  },
+				{ GRB_CAPE,             -1,          -1, "Гроза"  },
+			};
+			QList<LayerBar::Item> have;
+			for (const Cand &c : all) {
+				int type = (c.type == GRB_PRV_WAV_SIG) ? GRB_WAV_SIG_HT
+				                                       : c.type;
+				if (map->hasField (type, c.lt, c.lv))
+					have << LayerBar::Item {c.type, c.lt, c.lv,
+					                        QString::fromUtf8 (c.name)};
 			}
-			bool stale = last < QDateTime::currentDateTimeUtc ();
-			say (stale
-			     ? QStringLiteral("прогноз устарел · был до %1")
-			           .arg (last.toLocalTime().toString ("dd.MM HH:mm"))
-			     : prefix + QStringLiteral("на %1 · есть до %2")
-			           .arg (shown.toLocalTime().toString ("dd.MM HH:mm"))
-			           .arg (last.toLocalTime().toString ("dd.MM HH:mm")),
-			     stale);
+			layers->setItems (have);
+
+			// Возвращаем слой, выбранный в прошлый раз.
+			int want = Settings::getUserSetting ("phoneLayer",
+			                                     GRB_PRV_WIND_XY2D).toInt();
+			for (int i = 0; i < have.size(); ++i) {
+				if (have.at(i).type != want)
+					continue;
+				layers->setCurrent (i);
+				map->setColorMap (have.at(i).type, have.at(i).levelType,
+				                  have.at(i).levelValue);
+				break;
+			}
+			placeLayers ();
+		}
+
+		void placeLayers ()
+		{
+			layers->refit ();
+			int y = (map->height() - layers->height())/2;
+			if (y < 8)
+				y = 8;
+			layers->move (0, y);
+			layers->raise ();
+			tab->move (0, map->height()/2 - tab->height()/2);
+			tab->setVisible (!layers->isVisible());
+			tab->raise ();
+		}
+
+		void fillLine ()
+		{
+			wall = QDateTime ();
+			line->setZone (tz*3600);
+			line->setSteps (map->forecastSteps());
+			line->setIndex (map->forecastIndex());
+			bool has = map->hasForecast ();
+			back->setEnabled (has);
+			forward->setEnabled (has);
 		}
 
 		void say (const QString &text, bool alarm)
 		{
 			stamp->setStyleSheet (QStringLiteral(
-			    "background: rgba(%1, 200); color: white;"
-			    "padding: 6px 14px; font-size: 15px; border-radius: 12px;")
+			    "background: rgba(%1, 205); color: white;"
+			    "padding: 7px 16px; font-size: 17px; font-weight: bold;"
+			    "border-radius: 13px;")
 			    .arg (alarm ? "150,45,35" : "20,40,60"));
 			stamp->setText (text);
 			stamp->adjustSize ();
 			stamp->show ();
-			placeChips ();
+			placeStamp ();
 		}
 
-		QLabel *chip (const QString &colors)
+		void placeStamp ()
 		{
-			QLabel *l = new QLabel (map);
-			l->setStyleSheet (colors + "padding: 6px 14px;"
-			                           "font-size: 15px; border-radius: 12px;");
-			l->setAlignment (Qt::AlignCenter);
-			l->setAttribute (Qt::WA_TransparentForMouseEvents);
-			return l;
-		}
-
-		void placeChips ()
-		{
-			where->move ((map->width() - where->width())/2, 12);
-			stamp->move ((map->width() - stamp->width())/2,
-			             12 + where->height() + 6);
-			where->raise ();
+			stamp->move ((map->width() - stamp->width())/2, 12);
 			stamp->raise ();
 		}
 
-		QPushButton *overlay (const QString &text)
+		QPushButton *button (const QString &text, bool accent)
 		{
-			QPushButton *b = new QPushButton (text, map);
-			b->setFixedSize (OVER, OVER);
-			b->setStyleSheet (
-			    "font-size: 32px; font-weight: bold; color: white;"
-			    "background: rgba(20,40,60,170);"
-			    "border: none; border-radius: 38px;");
+			QPushButton *b = new QPushButton (text);
+			b->setMinimumHeight (61);
+			b->setStyleSheet (QStringLiteral(
+			    "font-size: %1px; font-weight: bold; border: none;"
+			    "color: %2; background: %3;")
+			    .arg (accent ? 18 : 20)
+			    .arg (accent ? "white" : "#1a2a3a")
+			    .arg (accent ? "#2d6ea8" : "#e4eaf0"));
 			return b;
 		}
 
-		void placeOverlays ()
-		{
-			toggle->move (GAP, map->height() - OVER - GAP);
-			toggle->raise ();
-			placeChips ();
-		}
-
 		MapView      *map;
-		QLabel       *where;
 		QLabel       *stamp;
+		TimeBar      *line;
 		Wheel        *days;
 		Wheel        *step;
+		Wheel        *zone;
+		int           tz;        // пояс показа, часов от UTC
+		QDateTime     wall;      // показание часов, которое держим при
+		                         // переводе пояса
+		QPushButton  *back;
+		QPushButton  *forward;
+		QPushButton  *setup;
 		QPushButton  *load;
-		QPushButton  *toggle;
 		QWidget      *panel;
+		QWidget      *buttons;
+		LayerBar     *layers;
+		QPushButton  *tab;
 		QProgressBar *bar;
 };
 

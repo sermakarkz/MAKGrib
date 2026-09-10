@@ -13,6 +13,7 @@ MAKGrib для Android — карта под палец.
 #include <QElapsedTimer>
 #include <QTouchEvent>
 
+#include "DataDefines.h"
 #include "GribPlot.h"
 #include "GribReader.h"
 #include "zuFile.h"
@@ -142,6 +143,138 @@ bool MapView::forecastTimes (QDateTime *shown, QDateTime *last) const
 		*last  = QDateTime::fromSecsSinceEpoch (*dates.rbegin(),
 		                                        QTimeZone::UTC);
 	return true;
+}
+
+//---------------------------------------------------------------------
+// Ветер красится по служебному коду: самого «поля скорости» в файле нет,
+// оно считается из двух составляющих.
+static int lookupType (int dataType)
+{
+	// Служебных полей в файле нет: скорость ветра считается из двух
+	// составляющих, а «температура минус точка росы» — из двух полей.
+	if (dataType == GRB_PRV_WIND_XY2D)
+		return GRB_WIND_VX;
+	if (dataType == GRB_PRV_DIFF_TEMPDEW)
+		return GRB_DEWPOINT;
+	return dataType;
+}
+
+//---------------------------------------------------------------------
+bool MapView::hasField (int dataType, int levelType, int levelValue) const
+{
+	if (plot == nullptr || !plot->isReaderOk())
+		return false;
+	int look = lookupType (dataType);
+	for (const DataCode &d : plot->getReader()->getAllDataCode()) {
+		if (d.dataType != look)
+			continue;
+		if (levelType >= 0 && d.levelType != levelType)
+			continue;
+		if (levelValue >= 0 && d.levelValue != levelValue)
+			continue;
+		return true;
+	}
+	return false;
+}
+
+//---------------------------------------------------------------------
+void MapView::setColorMap (int dataType, int levelType, int levelValue)
+{
+	if (drawer == nullptr)
+		return;
+	DataCode dtc (dataType, (levelType >= 0) ? levelType : LV_GND_SURF,
+	              (levelValue >= 0) ? levelValue : 0);
+	if (dataType == GRB_PRV_WIND_XY2D)
+		dtc = DataCode (GRB_PRV_WIND_XY2D, LV_ABOV_GND, 10);
+	else if (dataType == GRB_PRV_DIFF_TEMPDEW)
+		dtc = DataCode (GRB_PRV_DIFF_TEMPDEW, LV_ABOV_GND, 2);
+	else if (plot != nullptr && plot->isReaderOk()) {
+		// Уровень берём из файла: у облачности он «вся атмосфера», у
+		// осадков — поверхность, и угадывать их незачем.
+		for (const DataCode &d : plot->getReader()->getAllDataCode()) {
+			if (d.dataType != dataType)
+				continue;
+			if (levelType >= 0 && d.levelType != levelType)
+				continue;
+			if (levelValue >= 0 && d.levelValue != levelValue)
+				continue;
+			dtc = d;
+			break;
+		}
+	}
+	// Рисовалку трогает фоновый поток; ждём, пока отпустит.
+	waitRender ();
+	drawer->setColorMapData (dtc);
+	bufferValid = false;
+	update ();
+}
+
+//---------------------------------------------------------------------
+QList<QDateTime> MapView::forecastSteps () const
+{
+	QList<QDateTime> out;
+	if (plot == nullptr || !plot->isReaderOk())
+		return out;
+	for (time_t t : plot->getReader()->getListDates())
+		out << QDateTime::fromSecsSinceEpoch (t, QTimeZone::UTC);
+	return out;
+}
+
+//---------------------------------------------------------------------
+int MapView::forecastIndex () const
+{
+	if (plot == nullptr || !plot->isReaderOk())
+		return -1;
+	int i = 0;
+	for (time_t t : plot->getReader()->getListDates()) {
+		if (t == plot->getCurrentDate())
+			return i;
+		++i;
+	}
+	return -1;
+}
+
+//---------------------------------------------------------------------
+void MapView::showForecastStep (int index)
+{
+	if (plot == nullptr || !plot->isReaderOk() || index < 0)
+		return;
+	std::set<time_t> dates = plot->getReader()->getListDates ();
+	if (index >= int (dates.size()))
+		return;
+	std::set<time_t>::const_iterator it = dates.begin ();
+	std::advance (it, index);
+	if (*it == plot->getCurrentDate())
+		return;
+	// Прогноз читает фоновый поток; менять срок, пока он рисует, нельзя.
+	waitRender ();
+	plot->setCurrentDate (*it);
+	bufferValid = false;
+	emit forecastTimeChanged ();
+	update ();
+}
+
+//---------------------------------------------------------------------
+// Ближайший к заданному моменту срок. Точного попадания ждать не стоит:
+// сроки идут через час или три, и между ними ничего нет.
+void MapView::showForecastNear (const QDateTime &moment)
+{
+	if (plot == nullptr || !plot->isReaderOk())
+		return;
+	std::set<time_t> dates = plot->getReader()->getListDates ();
+	time_t want = moment.toSecsSinceEpoch ();
+	int best = -1, i = 0;
+	qint64 bestGap = 0;
+	for (time_t t : dates) {
+		qint64 gap = qAbs (qint64 (t) - qint64 (want));
+		if (best < 0 || gap < bestGap) {
+			best = i;
+			bestGap = gap;
+		}
+		++i;
+	}
+	if (best >= 0)
+		showForecastStep (best);
 }
 
 //---------------------------------------------------------------------

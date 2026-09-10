@@ -44,6 +44,20 @@ class MapView : public QWidget
 		// чтобы вчерашний прогноз не выдавать за сегодняшний.
 		bool  forecastTimes (QDateTime *shown, QDateTime *last) const;
 
+		// Подложка карты: какое поле красить цветом. Уровень можно не
+		// указывать — возьмём тот, что есть в файле.
+		bool  hasField (int dataType, int levelType = -1,
+		                int levelValue = -1) const;
+		void  setColorMap (int dataType, int levelType = -1,
+		                   int levelValue = -1);
+
+		// Сроки прогноза для шкалы времени и листания.
+		bool  hasForecast () const   { return plot != nullptr; }
+		QList<QDateTime> forecastSteps () const;
+		int   forecastIndex () const;
+		void  showForecastStep (int index);
+		void  showForecastNear (const QDateTime &moment);
+
 		void  setCenter (double lon, double lat);
 		void  zoomBy (double factor);
 		Projection *projection () const  { return proj; }
@@ -51,6 +65,8 @@ class MapView : public QWidget
 	signals:
 		// Куда сейчас смотрим — для надписи сверху.
 		void  viewChanged (double lon, double lat, double scale);
+		// Показан другой срок прогноза.
+		void  forecastTimeChanged ();
 
 	protected:
 		// Касания ловим на уровне всего приложения: Qt отдаёт второй

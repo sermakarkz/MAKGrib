@@ -476,6 +476,15 @@ void MapDrawer::draw_MeteoData_Gridded
 			currentArrowsColor.setRgb(25, 25, 25);
 			break;
 	}
+
+	// Цвет стрелок можно задать жёстко, настройкой. Выбор по типу
+	// подложки выше рассчитан на большой экран: на телефоне белые
+	// стрелки поверх пёстрого поля скорости почти не читаются.
+	QString forced = Util::getSetting ("windArrowsColorForced", "").toString();
+	if (!forced.isEmpty()) {
+		windArrowsColor.setNamedColor (forced);
+		currentArrowsColor.setNamedColor (forced);
+	}
 	
 	//-------------------------------------------------------
 	// draw complete colored map
