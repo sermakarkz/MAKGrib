@@ -24,6 +24,7 @@ MAKGrib для Android.
 
 #include "AppData.h"
 #include "LayerBar.h"
+#include "ScaleBar.h"
 #include "MapView.h"
 #include "TimeBar.h"
 #include "Wheel.h"
@@ -149,6 +150,11 @@ class Main : public QWidget
 			    "border-top-right-radius: 12px;"
 			    "border-bottom-right-radius: 12px;");
 			connect (tab, &QPushButton::clicked, this, &Main::toggleLayers);
+
+			// Цветовая шкала у правого края: без неё цвет на карте
+			// ничего не значит.
+			scale = new ScaleBar (map);
+			scale->hide ();
 			map->installEventFilter (this);
 
 			days = new Wheel (QStringLiteral("Глубина"), 1, 10, 3,
@@ -252,6 +258,11 @@ class Main : public QWidget
 				load->setEnabled (true);
 			}
 			Settings::findAppDataDir ();
+			// Единицы измерения: ветер в метрах в секунду, давление в
+			// миллиметрах ртутного столба, температура в градусах.
+			Settings::setUserSetting ("unitsWindSpeed", "m/s");
+			Settings::setUserSetting ("unitsPressure", "mmHg");
+			Settings::setUserSetting ("unitsTemp", QStringLiteral("°C"));
 			// Названия городов на телефоне мельче, чем на мониторе, а
 			// смотрят на них с вытянутой руки и на качке.
 			Settings::setUserSetting ("FONT_MapCity_1",
@@ -279,6 +290,7 @@ class Main : public QWidget
 			if (o == map && e->type() == QEvent::Resize) {
 				placeStamp ();
 				placeLayers ();
+				placeScale ();
 			}
 			return QWidget::eventFilter (o, e);
 		}
@@ -301,6 +313,7 @@ class Main : public QWidget
 			Settings::setUserSetting ("phoneLayer", it.type);
 			layers->hide ();
 			placeLayers ();
+			showScale ();
 		}
 
 		void togglePanel ()
@@ -509,6 +522,35 @@ class Main : public QWidget
 				break;
 			}
 			placeLayers ();
+			showScale ();
+		}
+
+		// Шкала показывает то поле, которым сейчас крашена карта.
+		void showScale ()
+		{
+			double lo = 0, hi = 0;
+			if (!map->hasForecast() || !map->layerRange (&lo, &hi)) {
+				scale->hide ();
+				return;
+			}
+			MapView *m = map;
+			scale->setLayer (map->layerType(), lo, hi,
+			                 [m](double v) { return m->layerColor (v); });
+			scale->show ();
+			placeScale ();
+		}
+
+		void placeScale ()
+		{
+			int h = map->height() * 3 / 5;
+			if (h < 240)
+				h = 240;
+			if (h > map->height() - 24)
+				h = map->height() - 24;
+			scale->resize (ScaleBar::WIDTH, h);
+			scale->move (map->width() - ScaleBar::WIDTH,
+			             (map->height() - h)/2);
+			scale->raise ();
 		}
 
 		void placeLayers ()
@@ -583,6 +625,7 @@ class Main : public QWidget
 		QWidget      *panel;
 		QWidget      *buttons;
 		LayerBar     *layers;
+		ScaleBar     *scale;
 		QPushButton  *tab;
 		QProgressBar *bar;
 };

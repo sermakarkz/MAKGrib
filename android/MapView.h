@@ -14,6 +14,7 @@ MAKGrib для Android — карта под палец.
 #include <QDateTime>
 #include <QElapsedTimer>
 #include <QFutureWatcher>
+#include <QColor>
 #include <QHash>
 #include <QImage>
 #include <QPixmap>
@@ -50,6 +51,12 @@ class MapView : public QWidget
 		                int levelValue = -1) const;
 		void  setColorMap (int dataType, int levelType = -1,
 		                   int levelValue = -1);
+
+		// Цветовая шкала текущей подложки: код поля, границы и цвет
+		// значения — для полоски у правого края.
+		int   layerType () const   { return curType; }
+		bool  layerRange (double *lo, double *hi) const;
+		QColor layerColor (double v) const;
 
 		// Сроки прогноза для шкалы времени и листания.
 		bool  hasForecast () const   { return plot != nullptr; }
@@ -134,6 +141,9 @@ class MapView : public QWidget
 		// событии, где точек не ровно две, а Qt посреди щипка изредка
 		// присылает одну — жест разваливался, и карта вместо масштаба
 		// уезжала броском.
+		int      curType;        // какое поле красит подложку
+		int      curLevelType, curLevelValue;
+
 		QHash<int, QPointF> fingers;   // палец → где он сейчас
 		bool     pinching;
 		double   pinchDist;      // расстояние между пальцами на прошлом шаге
