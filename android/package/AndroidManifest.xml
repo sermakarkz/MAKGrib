@@ -15,6 +15,10 @@
     android:versionName="1.1.0">
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"  />
     <uses-permission android:name="android.permission.INTERNET"  />
+    <!-- Своё место на карте. Грубое разрешение идёт следом за точным:
+         без него Android не отдаёт место вовсе, если точное отклонили. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
     <supports-screens
         android:anyDensity="true"
@@ -25,6 +29,7 @@
         android:name="org.qtproject.qt.android.bindings.QtApplication"
         android:hardwareAccelerated="true"
         android:label="MAKGrib"
+        android:icon="@mipmap/ic_launcher"
         android:allowBackup="true"
         android:fullBackupOnly="false">
         <activity

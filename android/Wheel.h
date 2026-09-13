@@ -21,6 +21,7 @@ class Wheel : public QWidget
 		       const QString &suffix, QWidget *parent = nullptr);
 
 		int  value () const  { return val; }
+		void setValue (int v);
 		// Своё оформление числа: часовому поясу нужно «UTC+4», а не «4».
 		void setFormatter (std::function<QString(int)> f);
 

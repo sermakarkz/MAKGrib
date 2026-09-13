@@ -15,6 +15,7 @@ MAKGrib для Android — карта под палец.
 
 #include "ColorScale.h"
 #include "DataDefines.h"
+#include "DataPointInfo.h"
 #include "GribPlot.h"
 #include "GribReader.h"
 #include "zuFile.h"
@@ -54,6 +55,12 @@ MapView::MapView (QWidget *parent)
 	  bufferValid (false), rendering (false), pending (false),
 	  renderScale (0), renderShift (0, 0),
 	  shift (0, 0), residual (0, 0), bufferScale (0),
+	  stampAlarm (false),
+	  ownOk (false), own (0, 0), ownAcc (0),
+	  probing (false),
+	  boatOn (false), boatAt (0, 0), boatCourse (0),
+	  routing (NoRoute), dragPoint (-1), holdPoint (-1),
+	  tapAt (0, 0), tapMs (0),
 	  curType (0), curLevelType (0), curLevelValue (0),
 	  dragging (false), pinching (false), pinchDist (0)
 {
@@ -62,6 +69,11 @@ MapView::MapView (QWidget *parent)
 	connect (&settle, &QTimer::timeout, this, &MapView::settleNow);
 	connect (&watcher, &QFutureWatcher<QImage>::finished,
 	         this, &MapView::renderDone);
+	// Долгое нажатие на точку удаляет её: место под кнопку в ряду уже
+	// кончилось, а без удаления правка неполная.
+	holdTimer.setSingleShot (true);
+	holdTimer.setInterval (600);
+	connect (&holdTimer, &QTimer::timeout, this, &MapView::holdFired);
 	setAttribute (Qt::WA_AcceptTouchEvents);
 	qApp->installEventFilter (this);
 	setAutoFillBackground (false);
@@ -241,6 +253,295 @@ QColor MapView::layerColor (double v) const
 	return QColor (plot->getDataCodeColor (
 	                   DataCode (curType, curLevelType, curLevelValue),
 	                   v, true));
+}
+
+//---------------------------------------------------------------------
+void MapView::setRouteMode (int mode)
+{
+	routing   = mode;
+	dragPoint = -1;
+	update ();
+}
+
+//---------------------------------------------------------------------
+// Расстояние от точки до отрезка — по нему решаем, попал ли палец в
+// участок маршрута, чтобы вставить туда новую точку.
+static double gapToLeg (const QPointF &p, const QPointF &a, const QPointF &b)
+{
+	double vx = b.x()-a.x(), vy = b.y()-a.y();
+	double len = vx*vx + vy*vy;
+	double t = (len > 0) ? ((p.x()-a.x())*vx + (p.y()-a.y())*vy) / len : 0;
+	t = qBound (0.0, t, 1.0);
+	return std::hypot (p.x() - (a.x()+t*vx), p.y() - (a.y()+t*vy));
+}
+
+//---------------------------------------------------------------------
+// Ближайшая точка маршрута под пальцем, иначе -1.
+int MapView::pointAt (const QPointF &screen) const
+{
+	int best = -1;
+	double bestGap = 34.0;              // палец накрывает примерно столько
+	for (int i = 0; i < way.size(); ++i) {
+		int x, y;
+		proj->map2screen (way.at(i).x(), way.at(i).y(), &x, &y);
+		double g = std::hypot (screen.x()-x, screen.y()-y);
+		if (g < bestGap) {
+			bestGap = g;
+			best = i;
+		}
+	}
+	return best;
+}
+
+//---------------------------------------------------------------------
+// Участок, по которому попали, — новая точка встанет в его середину.
+int MapView::legAt (const QPointF &screen) const
+{
+	int best = -1;
+	double bestGap = 26.0;
+	for (int i = 1; i < way.size(); ++i) {
+		int x1, y1, x2, y2;
+		proj->map2screen (way.at(i-1).x(), way.at(i-1).y(), &x1, &y1);
+		proj->map2screen (way.at(i).x(),   way.at(i).y(),   &x2, &y2);
+		double g = gapToLeg (screen, QPointF (x1, y1), QPointF (x2, y2));
+		if (g < bestGap) {
+			bestGap = g;
+			best = i;
+		}
+	}
+	return best;
+}
+
+//---------------------------------------------------------------------
+void MapView::insertRoutePoint (int before, const QPointF &lonLat)
+{
+	if (before < 0 || before > way.size())
+		return;
+	way.insert (before, lonLat);
+	emit routeChanged ();
+	update ();
+}
+
+//---------------------------------------------------------------------
+void MapView::moveRoutePoint (int i, const QPointF &lonLat)
+{
+	if (i < 0 || i >= way.size())
+		return;
+	way[i] = lonLat;
+	emit routeChanged ();
+	update ();
+}
+
+//---------------------------------------------------------------------
+void MapView::removeRoutePoint (int i)
+{
+	if (i < 0 || i >= way.size())
+		return;
+	way.removeAt (i);
+	emit routeChanged ();
+	update ();
+}
+
+//---------------------------------------------------------------------
+void MapView::holdFired ()
+{
+	if (holdPoint < 0) {
+		// Палец не на точке маршрута — значит, смотрим погоду.
+		probing    = true;
+		dragging   = false;
+		probeAt    = tapAt;
+		probeLines = pointInfo (tapAt).split ('\n');
+		update ();
+		return;
+	}
+	removeRoutePoint (holdPoint);
+	holdPoint = -1;
+	dragPoint = -1;
+}
+
+//---------------------------------------------------------------------
+void MapView::addRoutePoint (const QPointF &lonLat)
+{
+	way << lonLat;
+	emit routeChanged ();
+	update ();
+}
+
+//---------------------------------------------------------------------
+void MapView::dropLastPoint ()
+{
+	if (way.isEmpty())
+		return;
+	way.removeLast ();
+	emit routeChanged ();
+	update ();
+}
+
+//---------------------------------------------------------------------
+void MapView::clearRoute ()
+{
+	if (way.isEmpty())
+		return;
+	way.clear ();
+	emit routeChanged ();
+	update ();
+}
+
+//---------------------------------------------------------------------
+void MapView::setRoute (const QList<QPointF> &pts)
+{
+	way = pts;
+	emit routeChanged ();
+	update ();
+}
+
+//---------------------------------------------------------------------
+// Длина одного участка в морских милях и курс на нём.
+static double legMiles (const QPointF &a, const QPointF &b)
+{
+	const double R = 3440.065;
+	double la1 = a.y() * M_PI/180.0, la2 = b.y() * M_PI/180.0;
+	double dla = la2 - la1;
+	double dlo = (b.x() - a.x()) * M_PI/180.0;
+	double h = std::sin(dla/2)*std::sin(dla/2)
+	         + std::cos(la1)*std::cos(la2)*std::sin(dlo/2)*std::sin(dlo/2);
+	return 2.0 * R * std::asin (std::sqrt (h));
+}
+
+//---------------------------------------------------------------------
+static double legCourse (const QPointF &a, const QPointF &b)
+{
+	double la1 = a.y() * M_PI/180.0, la2 = b.y() * M_PI/180.0;
+	double dlo = (b.x() - a.x()) * M_PI/180.0;
+	double y = std::sin(dlo) * std::cos(la2);
+	double x = std::cos(la1)*std::sin(la2)
+	         - std::sin(la1)*std::cos(la2)*std::cos(dlo);
+	double c = std::atan2 (y, x) * 180.0/M_PI;
+	return (c < 0) ? c + 360.0 : c;
+}
+
+//---------------------------------------------------------------------
+void MapView::setStamp (const QString &text, bool alarm)
+{
+	stamp      = text;
+	stampAlarm = alarm;
+	update ();
+}
+
+//---------------------------------------------------------------------
+void MapView::setOwnPos (double lon, double lat, double accuracy)
+{
+	own    = QPointF (lon, lat);
+	ownAcc = accuracy;
+	ownOk  = true;
+	update ();
+}
+
+//---------------------------------------------------------------------
+// Погода в точке на показанный срок. Значения достаёт DataPointInfo —
+// тот же, которым пользуется настольная версия: он знает, где что лежит,
+// и сам говорит, чего в файле нет.
+QString MapView::pointInfo (const QPointF &screen) const
+{
+	if (plot == nullptr || !plot->isReaderOk())
+		return tr("прогноз не загружен");
+
+	double lon, lat;
+	proj->screen2map (int(screen.x()), int(screen.y()), &lon, &lat);
+	DataPointInfo pi (plot->getReader(), lon, lat, plot->getCurrentDate());
+
+	QStringList out;
+	out << Util::formatLongitude (lon) + "  " + Util::formatLatitude (lat);
+
+	float sp = 0, dir = 0;
+	if (pi.getWindValues (Altitude (LV_ABOV_GND, 10), &sp, &dir))
+		out << tr("Ветер %1 %2")
+		        .arg (Util::formatSpeed_Wind (sp, true))
+		        .arg (Util::formatDirection (dir, true));
+	if (pi.hasGUSTsfc())
+		out << tr("Порывы %1")
+		        .arg (Util::formatSpeed_Wind (
+		            pi.getDataValue (DataCode (GRB_WIND_GUST, LV_GND_SURF, 0)),
+		            true));
+	float ht = 0, per = 0, wdir = 0;
+	if (pi.getWaveValues (GRB_PRV_WAV_SIG, &ht, &per, &wdir))
+		out << tr("Волна %1 м").arg (ht, 0, 'f', 1);
+	if (pi.hasPressureMSL())
+		out << tr("Давление %1")
+		        .arg (Util::formatPressure (
+		            pi.getDataValue (DataCode (GRB_PRESSURE_MSL, LV_MSL, 0)),
+		            true, 0));
+	if (pi.hasTemp())
+		out << tr("Воздух %1")
+		        .arg (Util::formatTemperature (
+		            pi.getDataValue (DataCode (GRB_TEMP, LV_ABOV_GND, 2)), true));
+	if (pi.hasWaterTemp())
+		out << tr("Вода %1")
+		        .arg (Util::formatTemperature (
+		            pi.getDataValue (DataCode (GRB_WTMP, LV_GND_SURF, 0)), true));
+	if (pi.hasCloudTotal())
+		out << tr("Облачность %1")
+		        .arg (Util::formatPercentValue (
+		            pi.getDataValue (DataCode (GRB_CLOUD_TOT, LV_ATMOS_ALL, 0))));
+	if (pi.hasRain())
+		out << tr("Осадки %1")
+		        .arg (Util::formatRain (
+		            pi.getDataValue (DataCode (GRB_PRECIP_TOT, LV_GND_SURF, 0))));
+
+	if (out.size() == 1)
+		out << tr("здесь данных нет");
+	return out.join ("\n");
+}
+
+//---------------------------------------------------------------------
+// Судно на маршруте: идём по участкам, пока не наберём нужные мили.
+void MapView::setBoatMiles (double miles)
+{
+	if (miles < 0 || way.size() < 2) {
+		if (boatOn) {
+			boatOn = false;
+			update ();
+		}
+		return;
+	}
+	double left = miles;
+	QPointF pos = way.first ();
+	double  crs = legCourse (way.at(0), way.at(1));
+	for (int i = 1; i < way.size(); ++i) {
+		double d = legMiles (way.at(i-1), way.at(i));
+		crs = legCourse (way.at(i-1), way.at(i));
+		if (left <= d || i == way.size()-1) {
+			double f = (d > 0) ? qBound (0.0, left/d, 1.0) : 0.0;
+			pos = QPointF (way.at(i-1).x() + (way.at(i).x()-way.at(i-1).x())*f,
+			               way.at(i-1).y() + (way.at(i).y()-way.at(i-1).y())*f);
+			break;
+		}
+		left -= d;
+	}
+	boatOn     = true;
+	boatAt     = pos;
+	boatCourse = crs;
+	update ();
+}
+
+//---------------------------------------------------------------------
+// Длина маршрута в морских милях, по дуге большого круга: на каспийских
+// расстояниях разница с плоской прикидкой невелика, но она копится, а
+// мили потом делятся на скорость.
+double MapView::routeMiles () const
+{
+	const double R = 3440.065;          // радиус Земли в морских милях
+	double sum = 0;
+	for (int i = 1; i < way.size(); ++i) {
+		double la1 = way.at(i-1).y() * M_PI/180.0;
+		double la2 = way.at(i).y()   * M_PI/180.0;
+		double dla = la2 - la1;
+		double dlo = (way.at(i).x() - way.at(i-1).x()) * M_PI/180.0;
+		double a = std::sin(dla/2)*std::sin(dla/2)
+		         + std::cos(la1)*std::cos(la2)*std::sin(dlo/2)*std::sin(dlo/2);
+		sum += 2.0 * R * std::asin (std::sqrt (a));
+	}
+	return sum;
 }
 
 //---------------------------------------------------------------------
@@ -500,7 +801,7 @@ void MapView::paintEvent (QPaintEvent *)
 		pnt.fillRect (rect(), QColor(30,60,90));
 		pnt.setPen (Qt::white);
 		pnt.drawText (rect(), Qt::AlignCenter,
-		              QStringLiteral("Карты ещё раскладываются…"));
+		              tr("Карты ещё раскладываются…"));
 		return;
 	}
 	bool wrongSize = buffer.width()  != width()  + 2*MARGIN
@@ -529,6 +830,136 @@ void MapView::paintEvent (QPaintEvent *)
 	// верхний угол лежит выше и левее нуля.
 	pnt.drawPixmap (QPointF(-MARGIN, -MARGIN), buffer);
 	pnt.restore ();
+
+	// Маршрут рисуем поверх картинки и по текущей проекции, а не по той,
+	// в которой нарисован буфер: точки должны держаться за карту даже
+	// когда подложка ещё не перерисована.
+	if (!way.isEmpty()) {
+		QPolygonF line;
+		for (const QPointF &q : way) {
+			int i, j;
+			proj->map2screen (q.x(), q.y(), &i, &j);
+			line << QPointF (i, j);
+		}
+		pnt.setRenderHint (QPainter::Antialiasing, true);
+		pnt.setPen (QPen (QColor (255, 255, 255, 200), 6,
+		                  Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+		pnt.drawPolyline (line);
+		pnt.setPen (QPen (QColor (200, 30, 30), 3,
+		                  Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+		pnt.drawPolyline (line);
+		QFont f = pnt.font ();  f.setPixelSize (11);  f.setBold (true);
+		pnt.setFont (f);
+		double r = (routing == EditRoute) ? 13 : 9;
+		for (int k = 0; k < line.size(); ++k) {
+			pnt.setPen (QPen (Qt::white, 2));
+			pnt.setBrush (QColor (k == dragPoint ? QColor (30, 120, 60)
+			                                     : QColor (200, 30, 30)));
+			pnt.drawEllipse (line.at(k), r, r);
+			pnt.setPen (Qt::white);
+			pnt.drawText (QRectF (line.at(k).x()-r, line.at(k).y()-r, 2*r, 2*r),
+			              Qt::AlignCenter, QString::number (k+1));
+		}
+	}
+
+	// Табличка вверху. Длинную подсказку переносим по словам, чтобы она
+	// не вылезала за края экрана.
+	if (!stamp.isEmpty()) {
+		QFont f = pnt.font ();
+		f.setPixelSize (17);
+		f.setBold (true);
+		pnt.setFont (f);
+		QFontMetrics fm (f);
+		const int pad = 9;
+		int maxw = width() - 40;
+		QRect need = fm.boundingRect (QRect (0, 0, maxw - 2*pad, 1000),
+		                              Qt::AlignHCenter | Qt::TextWordWrap,
+		                              stamp);
+		int bw = need.width() + 2*pad + 14;
+		int bh = need.height() + 2*pad;
+		int bx = (width() - bw)/2;
+		pnt.setRenderHint (QPainter::Antialiasing, true);
+		pnt.setPen (Qt::NoPen);
+		pnt.setBrush (stampAlarm ? QColor (150, 45, 35, 220)
+		                         : QColor (20, 40, 60, 210));
+		pnt.drawRoundedRect (QRectF (bx, 12, bw, bh), 13, 13);
+		pnt.setPen (Qt::white);
+		pnt.drawText (QRect (bx + pad, 12 + pad, bw - 2*pad, bh - 2*pad),
+		              Qt::AlignCenter | Qt::TextWordWrap, stamp);
+	}
+
+	// Окошко с погодой в точке: ставим его так, чтобы не закрывал палец
+	// — сверху, если хватает места, иначе снизу, и в пределах экрана.
+	if (probing && !probeLines.isEmpty()) {
+		QFont f = pnt.font ();
+		f.setPixelSize (15);
+		QFont bold = f;  bold.setBold (true);
+		QFontMetrics fm (f), fb (bold);
+		const int pad = 12;
+		int tw = 0;
+		for (int i = 0; i < probeLines.size(); ++i)
+			tw = qMax (tw, (i == 0 ? fb : fm).horizontalAdvance (probeLines.at(i)));
+		int bw = tw + 2*pad;
+		int bh = probeLines.size()*fm.lineSpacing() + 2*pad;
+		int bx = int (probeAt.x()) - bw/2;
+		int by = int (probeAt.y()) - bh - 60;
+		if (by < 8)
+			by = int (probeAt.y()) + 60;
+		by = qBound (8, by, qMax (8, height() - bh - 8));
+		bx = qBound (8, bx, qMax (8, width() - bw - 8));
+
+		pnt.setRenderHint (QPainter::Antialiasing, true);
+		pnt.setPen (Qt::NoPen);
+		pnt.setBrush (QColor (20, 40, 60, 230));
+		pnt.drawRoundedRect (QRectF (bx, by, bw, bh), 14, 14);
+		pnt.setPen (Qt::white);
+		for (int i = 0; i < probeLines.size(); ++i) {
+			pnt.setFont (i == 0 ? bold : f);
+			pnt.drawText (bx + pad,
+			              by + pad + fm.ascent() + i*fm.lineSpacing(),
+			              probeLines.at(i));
+		}
+	}
+
+	// Своё место: точка и круг точности. Круг рисуем настоящего
+	// размера — по нему видно, верить показанию или нет.
+	if (ownOk) {
+		int i, j;
+		proj->map2screen (own.x(), own.y(), &i, &j);
+		if (ownAcc > 1.0) {
+			// Метры переводим в градусы широты, а их — в точки экрана.
+			double degs = ownAcc / 1852.0 / 60.0;
+			int i2, j2;
+			proj->map2screen (own.x(), own.y() + degs, &i2, &j2);
+			double r = std::fabs (j2 - j);
+			if (r > 3 && r < 400) {
+				pnt.setPen (QPen (QColor (40, 120, 220, 150), 2));
+				pnt.setBrush (QColor (40, 120, 220, 40));
+				pnt.drawEllipse (QPointF (i, j), r, r);
+			}
+		}
+		pnt.setPen (QPen (Qt::white, 3));
+		pnt.setBrush (QColor (30, 110, 230));
+		pnt.drawEllipse (QPointF (i, j), 9, 9);
+	}
+
+	// Судно: где оно окажется к показанному сроку прогноза. Рисуем
+	// стрелкой по курсу — так видно не только место, но и куда идём.
+	if (boatOn) {
+		int i, j;
+		proj->map2screen (boatAt.x(), boatAt.y(), &i, &j);
+		pnt.save ();
+		pnt.setRenderHint (QPainter::Antialiasing, true);
+		pnt.translate (i, j);
+		pnt.rotate (boatCourse);
+		QPolygonF hull;
+		hull << QPointF (0, -17) << QPointF (11, 12)
+		     << QPointF (0, 6)   << QPointF (-11, 12);
+		pnt.setPen (QPen (QColor (20, 40, 60), 2.5));
+		pnt.setBrush (QColor (255, 214, 64));
+		pnt.drawPolygon (hull);
+		pnt.restore ();
+	}
 }
 
 //---------------------------------------------------------------------
@@ -600,6 +1031,21 @@ bool MapView::event (QEvent *e)
 			break;
 		glideTimer.stop ();
 		if (!pinching && t->points().size() == 1) {
+			tapAt     = t->points().first().position ();
+			tapMs     = QDateTime::currentMSecsSinceEpoch ();
+			// В правке палец, легший на точку, тащит её, а не карту.
+			dragPoint = (routing == EditRoute) ? pointAt (tapAt) : -1;
+			if (dragPoint >= 0) {
+				holdPoint = dragPoint;
+				holdTimer.start ();
+				update ();
+				return true;
+			}
+			// Держим палец на карте — покажем погоду в этой точке. Отсчёт
+			// тот же, что у удаления точки: сработает одно из двух, смотря
+			// попали в маршрут или нет.
+			if (routing == NoRoute)
+				holdTimer.start ();
 			dragging  = true;
 			lastTouch = t->points().first().position ();
 			velocity  = QPointF (0, 0);
@@ -612,6 +1058,30 @@ bool MapView::event (QEvent *e)
 
 	case QEvent::TouchUpdate: {
 		QTouchEvent *t = static_cast<QTouchEvent *>(e);
+		if (probing && !t->points().isEmpty()) {
+			probeAt    = t->points().first().position ();
+			probeLines = pointInfo (probeAt).split ('\n');
+			update ();
+			return true;
+		}
+		if (dragPoint >= 0 && !t->points().isEmpty()) {
+			QPointF at = t->points().first().position ();
+			// Повели пальцем — значит тащат, а не удаляют.
+			if (std::hypot (at.x()-tapAt.x(), at.y()-tapAt.y()) > 10.0) {
+				holdTimer.stop ();
+				holdPoint = -1;
+			}
+			double lon, lat;
+			proj->screen2map (int(at.x()), int(at.y()), &lon, &lat);
+			moveRoutePoint (dragPoint, QPointF (lon, lat));
+			return true;
+		}
+		// Повели пальцем до срабатывания отсчёта — значит, тащат карту.
+		if (!t->points().isEmpty() && holdTimer.isActive()) {
+			QPointF at = t->points().first().position ();
+			if (std::hypot (at.x()-tapAt.x(), at.y()-tapAt.y()) > 12.0)
+				holdTimer.stop ();
+		}
 		// Щипок считается в фильтре, здесь только перетаскивание.
 		if (pinching || !dragging || t->points().size() != 1)
 			return true;            // не наше дело, но событие принимаем
@@ -631,9 +1101,53 @@ bool MapView::event (QEvent *e)
 
 	case QEvent::TouchEnd:
 	case QEvent::TouchCancel: {
+		holdTimer.stop ();
+		holdPoint = -1;
+		if (probing) {
+			probing  = false;
+			dragging = false;
+			probeLines.clear ();
+			update ();
+			return true;
+		}
+		if (dragPoint >= 0) {
+			dragPoint = -1;
+			settleNow ();
+			return true;
+		}
 		if (pinching || !dragging)
 			return true;            // щипок закрывает фильтр
 		dragging = false;
+		// Короткое касание без сдвига — это работа с маршрутом, а не
+		// бросок карты.
+		if (routing != NoRoute) {
+			QTouchEvent *t = static_cast<QTouchEvent *>(e);
+			QPointF now = t->points().isEmpty()
+			                  ? tapAt : t->points().first().position ();
+			double moved = std::hypot (now.x()-tapAt.x(), now.y()-tapAt.y());
+			if (moved < 14.0
+			 && QDateTime::currentMSecsSinceEpoch() - tapMs < 500) {
+				double lon, lat;
+				proj->screen2map (int(now.x()), int(now.y()), &lon, &lat);
+				if (routing == DrawRoute)
+					addRoutePoint (QPointF (lon, lat));
+				else {
+					// В правке касание по участку вставляет в него точку;
+					// мимо маршрута — ничего, чтобы случайное касание не
+					// портило проложенное.
+					int leg = legAt (now);
+					if (leg > 0)
+						insertRoutePoint (leg, QPointF (lon, lat));
+					else if (way.size() < 2)
+						// Точек меньше двух — участков нет, вставлять
+						// некуда, и портить нечего: просто добавляем.
+						// Иначе, удалив одну из двух, выйти из правки
+						// было бы нечем, кроме как через «Закончить».
+						addRoutePoint (QPointF (lon, lat));
+				}
+				return true;
+			}
+		}
 		// Если палец перед отрывом стоял, бросок не начинаем.
 		if (sinceMove.elapsed() < 100
 		 && std::hypot (velocity.x(), velocity.y()) > STOP_SPEED)

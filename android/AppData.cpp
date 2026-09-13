@@ -14,6 +14,7 @@ assets — это не файлы, а записи в архиве. Поэтом
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
+#include <QFileInfo>
 #include <QStandardPaths>
 
 #include "Settings.h"
@@ -74,6 +75,35 @@ bool AppData::ready ()
 	// остальное бессмысленно.
 	return QDir (dataDir() + "/data/maps/gshhs").exists()
 	    && QDir (dataDir() + "/data/gis").exists();
+}
+
+//---------------------------------------------------------------------
+void AppData::syncNew ()
+{
+	const QString src = QStringLiteral("assets:/data");
+	const QString dst = dataDir () + "/data";
+	if (!QDir(src).exists())
+		return;
+	QDirIterator it (src, QDir::Files, QDirIterator::Subdirectories);
+	int added = 0;
+	while (it.hasNext()) {
+		it.next ();
+		QString rel = it.filePath().mid (src.length() + 1);
+		QString to  = dst + "/" + rel;
+		// Сравниваем не только наличие, но и размер: переводы и палитры
+		// в новой сборке меняются, а имя у них прежнее.
+		if (QFile::exists (to)
+		 && QFileInfo (to).size() == it.fileInfo().size())
+			continue;
+		QFile::remove (to);
+		QDir().mkpath (QFileInfo (to).path());
+		if (QFile::copy (it.filePath(), to)) {
+			QFile::setPermissions (to, QFile::ReadOwner | QFile::WriteOwner);
+			++added;
+		}
+	}
+	if (added > 0)
+		qWarning ("доложено файлов из APK: %d", added);
 }
 
 //---------------------------------------------------------------------

@@ -92,4 +92,13 @@ cd "$SRC/build"
 echo
 echo "=== Проекция Меркатора без PROJ ==="
 QT_QPA_PLATFORM=offscreen "$SRC/build/mercatortest" 2>&1 | grep -v "^qt\."
-exit $(( BOAT + ${PIPESTATUS[0]} ))
+MERC=${PIPESTATUS[0]}
+
+# Год для даты выхода: Qt здесь не нужен, правило чистое.
+echo
+echo "=== Год маршрута через Новый год ==="
+c++ -std=c++17 -o "$SRC/build/routetest" "$SRC/tests/routetest.cpp"
+"$SRC/build/routetest"
+ROUTE=$?
+
+exit $(( BOAT + MERC + ROUTE ))

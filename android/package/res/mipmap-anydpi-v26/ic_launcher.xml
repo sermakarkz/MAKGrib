@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Адаптивный значок для Android 8 и новее: система сама обрежет его под
+    ту форму, которую принято рисовать на этой оболочке. Без него MIUI
+    вставляет обычный значок в белый квадрат, и он выглядит чужим.
+-->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/ic_launcher_background"/>
+    <foreground android:drawable="@mipmap/ic_launcher_foreground"/>
+</adaptive-icon>
