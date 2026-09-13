@@ -15,3 +15,14 @@ mac_online_installer/packages/org.opengribs.xygrib.core.mac/.DS_Store
 *.autosave
 # Копия данных для APK: делается сборкой из data/, в репозитории не нужна.
 android/package/assets/
+
+# Ключи подписи — рядом с исходниками им не место ни при каких условиях.
+*.keystore
+*.jks
+*.p12
+key.properties
+
+# Собранные установщики.
+/out/
+/out-win/
+/dist/
