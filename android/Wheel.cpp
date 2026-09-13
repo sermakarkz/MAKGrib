@@ -23,9 +23,10 @@ Wheel::Wheel (const QString &title_, int lo_, int hi_, int start,
 	  dragging (false), lastY (0)
 {
 	setFixedHeight (CAPTION + VISIBLE*ITEM);
-	// Втроём в строку: на узком экране каждому достаётся около ста
-	// точек, и запас в 140 не давал бы им встать рядом.
-	setMinimumWidth (100);
+	// В ряд их может стоять и шесть: на узком экране каждому достаётся
+	// около полусотни точек. Крутят колесо движением вдоль, а не
+	// попаданием в него, поэтому узкое остаётся рабочим.
+	setMinimumWidth (48);
 	timer.setInterval (16);
 	connect (&timer, &QTimer::timeout, this, &Wheel::animate);
 }
@@ -65,16 +66,46 @@ void Wheel::paintEvent (QPaintEvent *)
 		// барабана, уходящего за край.
 		int alpha = int (255 * std::max (0.0, 1.0 - d*0.75));
 		bool here = d < 0.5;
-		f.setPixelSize (here ? 26 : 20);
+		// Размер числа — от ширины колеса: в узком «8 уз» не помещается,
+		// и надпись обрезается, как было в самом начале с «3 су».
+		int big = qBound (15, int (width() * 0.34), 26);
+		f.setPixelSize (here ? big : big - 5);
 		f.setBold (here);
+		// И всё-таки меряем: «UTC+12» шире, чем «8», а колесо одно и то
+		// же. Не влезло — уменьшаем, пока не влезет.
+		{
+			QString t = fmt ? fmt (k)
+			                : (here && !suffix.isEmpty() && width() >= 76
+			                       ? QStringLiteral("%1 %2").arg (k).arg (suffix)
+			                       : QString::number (k));
+			int size = f.pixelSize ();
+			while (size > 12
+			       && QFontMetrics (f).horizontalAdvance (t) > width() - 10) {
+				f.setPixelSize (--size);
+			}
+		}
 		p.setFont (f);
 		p.setPen (QColor (0x1a, 0x2a, 0x3a, here ? 255 : alpha));
 		QString s = fmt ? fmt (k)
-		                : (here ? QStringLiteral("%1 %2").arg (k).arg (suffix)
-		                        : QString::number (k));
+		                : (here && !suffix.isEmpty() && width() >= 76
+		                       ? QStringLiteral("%1 %2").arg (k).arg (suffix)
+		                       : QString::number (k));
 		p.drawText (QRectF (0, y - ITEM/2.0, width(), ITEM),
 		            Qt::AlignCenter, s);
 	}
+}
+
+//---------------------------------------------------------------------
+void Wheel::setValue (int v)
+{
+	if (v < lo)  v = lo;
+	if (v > hi)  v = hi;
+	if (v == val)
+		return;
+	val    = v;
+	offset = 0;
+	update ();
+	emit valueChanged (val);
 }
 
 //---------------------------------------------------------------------

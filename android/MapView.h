@@ -52,11 +52,45 @@ class MapView : public QWidget
 		void  setColorMap (int dataType, int levelType = -1,
 		                   int levelValue = -1);
 
+		// Табличка вверху: срок прогноза, ход загрузки, подсказки.
+		// Рисуется картой, а не отдельной надписью поверх неё: надпись
+		// со стилевым фоном обрезала текст — см. окошко погоды.
+		void  setStamp (const QString &text, bool alarm);
+
+		// Своё место по GPS: точка и точность в метрах.
+		void  setOwnPos (double lon, double lat, double accuracy);
+		bool  hasOwnPos () const   { return ownOk; }
+		QPointF ownPos () const    { return own; }
+
+		// Погода в точке под пальцем, готовым текстом в несколько строк.
+		QString pointInfo (const QPointF &screen) const;
+
 		// Цветовая шкала текущей подложки: код поля, границы и цвет
 		// значения — для полоски у правого края.
 		int   layerType () const   { return curType; }
 		bool  layerRange (double *lo, double *hi) const;
 		QColor layerColor (double v) const;
+
+		// Маршрут: точки в градусах, по порядку следования.
+		// Прокладка — касание добавляет точку в конец; правка — точку
+		// можно тащить, а касание по участку вставляет новую в него.
+		enum RouteMode { NoRoute = 0, DrawRoute = 1, EditRoute = 2 };
+		void  setRouteMode (int mode);
+		int   routeMode () const   { return routing; }
+		void  addRoutePoint (const QPointF &lonLat);
+		void  insertRoutePoint (int before, const QPointF &lonLat);
+		void  moveRoutePoint (int index, const QPointF &lonLat);
+		void  removeRoutePoint (int index);
+		int   pointAt (const QPointF &screen) const;
+		int   legAt (const QPointF &screen) const;
+		void  dropLastPoint ();
+		void  clearRoute ();
+		const QList<QPointF> &route () const   { return way; }
+		void  setRoute (const QList<QPointF> &pts);
+		double routeMiles () const;
+		// Где судно после пройденных миль. Отрицательное — убрать судно
+		// с карты; больше длины маршрута — стоит в конце.
+		void  setBoatMiles (double miles);
 
 		// Сроки прогноза для шкалы времени и листания.
 		bool  hasForecast () const   { return plot != nullptr; }
@@ -70,6 +104,8 @@ class MapView : public QWidget
 		Projection *projection () const  { return proj; }
 
 	signals:
+		// Маршрут изменился — пересчитать длину и время.
+		void  routeChanged ();
 		// Куда сейчас смотрим — для надписи сверху.
 		void  viewChanged (double lon, double lat, double scale);
 		// Показан другой срок прогноза.
@@ -86,6 +122,7 @@ class MapView : public QWidget
 		bool  event (QEvent *e) override;
 
 	private slots:
+		void  holdFired ();      // долгое нажатие на точку — удалить
 		void  glide ();          // докатывание после отпускания пальца
 		void  settleNow ();      // перерисовать начисто
 		void  renderDone ();     // фоновая отрисовка закончилась
@@ -141,6 +178,32 @@ class MapView : public QWidget
 		// событии, где точек не ровно две, а Qt посреди щипка изредка
 		// присылает одну — жест разваливался, и карта вместо масштаба
 		// уезжала броском.
+		QList<QPointF> way;      // маршрут, в градусах
+		// Окошко с погодой в точке рисуем сами, на карте: дочерний
+		// виджет поверх неё жил в других координатах, и текст уезжал
+		// мимо рамки.
+		// Своё место по GPS.
+		QString  stamp;          // текст таблички вверху
+		bool     stampAlarm;
+
+		bool     ownOk;
+		QPointF  own;
+		double   ownAcc;         // точность, метров
+
+		bool        probing;
+		QPointF     probeAt;
+		QStringList probeLines;
+		bool     boatOn;         // судно на маршруте
+		QPointF  boatAt;         // где оно сейчас
+		double   boatCourse;     // и куда смотрит, в градусах
+
+		int      routing;        // режим работы с маршрутом
+		int      dragPoint;      // какую точку тащим, -1 — никакую
+		int      holdPoint;      // и какую держим, чтобы удалить
+		QTimer   holdTimer;
+		QPointF  tapAt;          // где палец лёг
+		qint64   tapMs;
+
 		int      curType;        // какое поле красит подложку
 		int      curLevelType, curLevelValue;
 

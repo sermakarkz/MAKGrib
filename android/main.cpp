@@ -6,11 +6,18 @@ MAKGrib для Android.
 кнопки: листать срок назад и вперёд, настроить и скачать. Настройки
 прячутся в шторку: их трогают редко.
 ***********************************************************************/
+#include <functional>
+
 #include <QApplication>
 #include <QDateTime>
 #include <QDir>
 #include <QEvent>
 #include <QFont>
+#include <QGeoPositionInfoSource>
+#include <QLocale>
+#include <QTranslator>
+#include <QPermissions>
+#include <QFontMetrics>
 #include <QTimeZone>
 #include <QFile>
 #include <QHBoxLayout>
@@ -23,6 +30,8 @@ MAKGrib для Android.
 #include <QWidget>
 
 #include "AppData.h"
+#include "IconButton.h"
+#include "RouteTime.h"
 #include "LayerBar.h"
 #include "ScaleBar.h"
 #include "MapView.h"
@@ -42,25 +51,33 @@ MAKGrib для Android.
 class BarProgress : public ForecastProgress
 {
 	public:
-		BarProgress (QProgressBar *b, QLabel *l) : bar (b), lab (l) {}
+		// Табличку заполняет само окно: у неё своя выкладка, и писать в
+		// неё мимо — значит получить пустой прямоугольник вместо текста.
+		BarProgress (QProgressBar *b, std::function<void(QString)> tell)
+			: bar (b), tell (tell) {}
+
 		void message (const QString &t) override
 		{
-			lab->setText (t);
-			lab->adjustSize ();
+			tell (t);
 			QApplication::processEvents ();
 		}
+
 		void step (int done, int total, qint64 bytes) override
 		{
 			if (total > 0)
 				bar->setValue ((100*done)/total);
-			lab->setText (QStringLiteral("%1 КБ").arg (bytes/1024));
-			lab->adjustSize ();
+			tell (total > 0
+			      ? QObject::tr("Качаю %1 из %2 · %3 КБ")
+			            .arg (done).arg (total).arg (bytes/1024)
+			      : QObject::tr("Качаю · %1 КБ").arg (bytes/1024));
 			QApplication::processEvents ();
 		}
+
 		bool canceled () override { return false; }
+
 	private:
 		QProgressBar *bar;
-		QLabel       *lab;
+		std::function<void(QString)> tell;
 };
 
 //---------------------------------------------------------------------
@@ -127,15 +144,8 @@ class Main : public QWidget
 		{
 			map = new MapView;
 
-			// Единственная надпись поверх карты — срок показанного
-			// прогноза. Координаты тут висели зря: в море и так видно,
-			// где ты, а вот на какой час нарисован ветер — вопрос
-			// первый.
-			stamp = new QLabel (map);
-			stamp->setAlignment (Qt::AlignCenter);
-			stamp->setAttribute (Qt::WA_TransparentForMouseEvents);
-			say (QString(), false);
-			stamp->hide ();
+			// Надпись вверху рисует сама карта: координаты тут висели
+			// зря, а вот на какой час нарисован ветер — вопрос первый.
 			// Узкая шторка слоёв у левого края. Открывается язычком —
 			// сама она закрывает часть карты, а на карту смотрят чаще,
 			// чем меняют слой.
@@ -151,16 +161,24 @@ class Main : public QWidget
 			    "border-bottom-right-radius: 12px;");
 			connect (tab, &QPushButton::clicked, this, &Main::toggleLayers);
 
+			// Круглая кнопка «моё место» поверх карты. Появляется сразу,
+			// но работает, когда GPS даст первое место.
+			// Значок рисуется кодом и кнопка круглая — см. IconButton.
+			locate = new IconButton (IconButton::Locate, false, map);
+			locate->setFixedSize (52, 52);
+			locate->setRound (true);
+			connect (locate, &QPushButton::clicked, this, &Main::goToOwnPos);
+
 			// Цветовая шкала у правого края: без неё цвет на карте
 			// ничего не значит.
 			scale = new ScaleBar (map);
 			scale->hide ();
 			map->installEventFilter (this);
 
-			days = new Wheel (QStringLiteral("Глубина"), 1, 10, 3,
-			                  QStringLiteral("сут"));
-			step = new Wheel (QStringLiteral("Шаг"), 1, 12, 3,
-			                  QStringLiteral("ч"));
+			days = new Wheel (tr("Глубина"), 1, 10, 3,
+			                  tr("сут"));
+			step = new Wheel (tr("Шаг"), 1, 12, 3,
+			                  tr("ч"));
 
 			// Сроки в GRIB всегда по Гринвичу. По умолчанию показываем в
 			// поясе телефона, но в рейсе он может быть чужим — скажем,
@@ -170,8 +188,21 @@ class Main : public QWidget
 			tz = Settings::getUserSetting ("displayTimeZone", here).toInt();
 			if (tz < -12 || tz > 14)
 				tz = here;
-			zone = new Wheel (QStringLiteral("Часовой пояс"), -12, 14, tz,
+			zone = new Wheel (tr("Пояс"), -12, 14, tz,
 			                  QString());
+			lang = new Wheel (tr("Язык"), 0, langCount()-1, 0, QString());
+			lang->setFormatter ([](int k) { return langName (k); });
+			connect (lang, &Wheel::valueChanged, this, &Main::setLang);
+			{   // ставим колесо на выбранный ранее язык
+				QString have = Settings::getUserSetting ("language", "")
+				                   .toString();
+				for (int i = 0; i < langCount(); ++i)
+					if (langCode (i) == have) {
+						lang->setValue (i);
+						break;
+					}
+			}
+
 			zone->setFormatter ([](int h) {
 				if (h == 0)  return QStringLiteral("UTC");
 				return QStringLiteral("UTC%1%2")
@@ -183,35 +214,44 @@ class Main : public QWidget
 
 			bar = new QProgressBar;    bar->setRange (0, 100);
 			bar->setTextVisible (false);
-			bar->setMaximumHeight (6);
+			bar->setFixedHeight (12);
+			bar->setStyleSheet (
+			    "QProgressBar { border: none; background: #d2dfec; }"
+			    "QProgressBar::chunk { background: #2d6ea8; }");
 			bar->hide ();
 
 			line = new TimeBar;
 			connect (line, &TimeBar::moved, this, &Main::goToStep);
 
-			// Стрелки берём буквенные, а не «▶»: у геометрических
-			// треугольников на Android эмодзи-начертание, и кнопка
-			// получается оранжевым квадратом.
-			back    = button (QStringLiteral("←"), false);
-			forward = button (QStringLiteral("→"), false);
-			setup   = button (QStringLiteral("Настроить"), false);
-			load    = button (QStringLiteral("Скачать"), true);
+			// Значки рисуются кодом: готовые знаки на Android
+			// подменяются цветными эмодзи, а картинки пришлось бы
+			// держать в нескольких разрешениях.
+			back    = new IconButton (IconButton::Back,     false);
+			forward = new IconButton (IconButton::Forward,  false);
+			setup   = new IconButton (IconButton::Gear,     false);
+			route   = new IconButton (IconButton::Route,    false);
+			load    = new IconButton (IconButton::Download, true);
+			info    = new IconButton (IconButton::Info,     false);
 			// Пока прогноза нет, листать нечего.
 			back->setEnabled (false);
 			forward->setEnabled (false);
 			connect (back,    &QPushButton::clicked, this, [this]() { shift (-1); });
 			connect (forward, &QPushButton::clicked, this, [this]() { shift (+1); });
 			connect (setup,   &QPushButton::clicked, this, &Main::togglePanel);
+			connect (route,   &QPushButton::clicked, this, &Main::toggleRoute);
 			connect (load,    &QPushButton::clicked, this, &Main::download);
+			connect (info,    &QPushButton::clicked, this, &Main::showInfo);
 
 			buttons = new QWidget;
 			QHBoxLayout *row = new QHBoxLayout (buttons);
 			row->setContentsMargins (0, 0, 0, 0);
 			row->setSpacing (1);
-			row->addWidget (back,    2);
-			row->addWidget (setup,   3);
-			row->addWidget (load,    3);
-			row->addWidget (forward, 2);
+			row->addWidget (back,    1);
+			row->addWidget (setup,   1);
+			row->addWidget (route,   1);
+			row->addWidget (load,    1);
+			row->addWidget (info,    1);
+			row->addWidget (forward, 1);
 
 			// Шторка: колёса и шапка, за которую её закрывают. Пока она
 			// открыта, кнопки внизу не нужны — шторка встаёт на их место.
@@ -225,6 +265,7 @@ class Main : public QWidget
 			wheels->addWidget (days, 1);
 			wheels->addWidget (step, 1);
 			wheels->addWidget (zone, 1);
+			wheels->addWidget (lang, 1);
 			QVBoxLayout *pl = new QVBoxLayout (panel);
 			pl->setContentsMargins (12, 0, 12, 10);
 			pl->setSpacing (4);
@@ -232,21 +273,119 @@ class Main : public QWidget
 			pl->addLayout (wheels);
 			panel->hide ();
 
+			// Панель маршрута: когда она открыта, настроек не видно и
+			// наоборот — обе занимают одно и то же место внизу.
+			// Дата, время и ход — каждое своим колесом. Час без минут и
+			// узел без десятых на переходе в сотни миль дают заметную
+			// ошибку в приходе, а без даты «старт через N часов» врёт,
+			// как только переставишь срок прогноза.
+			dayW  = new Wheel (tr("Число"), 1, 31, 1, QString());
+			monW  = new Wheel (tr("Месяц"), 1, 12, 1, QString());
+			// Названия месяцев берём у локали: переводить их руками на
+			// десяток языков — лишняя работа и лишние ошибки.
+			monW->setFormatter ([](int k) {
+				return QLocale().monthName (qBound (1, k, 12),
+				                            QLocale::ShortFormat);
+			});
+			hourW = new Wheel (tr("Час"), 0, 23, 0, QString());
+			minW  = new Wheel (tr("Мин"), 0, 11, 0, QString());
+			minW->setFormatter ([](int k) {
+				return QStringLiteral("%1").arg (k*5, 2, 10, QChar('0'));
+			});
+			speedK = new Wheel (tr("Узлы"), 1, 30, 8, QString());
+			speedT = new Wheel (tr("Доли"), 0, 9, 0, QString());
+			speedT->setFormatter ([](int k) {
+				return QStringLiteral(",%1").arg (k);
+			});
+			for (Wheel *w : {dayW, monW, hourW, minW, speedK, speedT})
+				connect (w, &Wheel::valueChanged, this, &Main::showRoute);
+
+			// Три действия в один ряд: проложить, править, очистить.
+			draw = new QPushButton (tr("Проложить"));
+			edit = new QPushButton (tr("Править"));
+			wipe = new QPushButton (tr("Очистить"));
+			for (QPushButton *b : {draw, edit, wipe}) {
+				b->setMinimumHeight (60);
+				b->setStyleSheet ("font-size: 16px; font-weight: bold;"
+				                  "color: white; background: #2d6ea8;"
+				                  "border: none; border-radius: 12px;");
+			}
+			wipe->setStyleSheet ("font-size: 16px; border: none;"
+			                     "border-radius: 12px; background: #e4eaf0;"
+			                     "color: #1a2a3a;");
+			connect (draw, &QPushButton::clicked,
+			         this, [this]() { setMode (MapView::DrawRoute); });
+			connect (edit, &QPushButton::clicked,
+			         this, [this]() { setMode (MapView::EditRoute); });
+			connect (wipe, &QPushButton::clicked,
+			         this, [this]() { map->clearRoute(); });
+
+			// Пока работаем с маршрутом, внизу только она: экран нужен
+			// целиком, а все прочие кнопки в это время бесполезны.
+			finish = new QPushButton (tr("Закончить"));
+			finish->setMinimumHeight (68);
+			finish->setStyleSheet ("font-size: 17px; font-weight: bold;"
+			                       "color: white; background: #b03028;"
+			                       "border: none;");
+			finish->hide ();
+			connect (finish, &QPushButton::clicked,
+			         this, [this]() { setMode (MapView::NoRoute); });
+
+			plan = new QLabel;
+			plan->setStyleSheet ("font-size: 15px; color: #33414f;");
+			plan->setAlignment (Qt::AlignCenter);
+			// Строка расчёта длинная, а обрезать в ней нечего: время
+			// прихода — последнее, что там стоит, и оно нужнее всего.
+			plan->setWordWrap (true);
+
+			rpanel = new QWidget;
+			rpanel->setStyleSheet ("background: #f2f5f8;");
+			QVBoxLayout *rl = new QVBoxLayout (rpanel);
+			rl->setContentsMargins (12, 0, 12, 10);
+			rl->setSpacing (6);
+			DrawerHandle *rhandle = new DrawerHandle;
+			connect (rhandle, &DrawerHandle::closeAsked,
+			         this, &Main::toggleRoute);
+			rl->addWidget (rhandle);
+			QHBoxLayout *rw = new QHBoxLayout;
+			rw->setSpacing (5);
+			rw->addWidget (dayW,   1);
+			rw->addWidget (monW,   1);
+			rw->addWidget (hourW,  1);
+			rw->addWidget (minW,   1);
+			rw->addWidget (speedK, 1);
+			rw->addWidget (speedT, 1);
+			rl->addLayout (rw);
+			rl->addWidget (plan);
+			QHBoxLayout *rb = new QHBoxLayout;
+			rb->setSpacing (8);
+			rb->addWidget (draw, 1);
+			rb->addWidget (edit, 1);
+			rb->addWidget (wipe, 1);
+			rl->addLayout (rb);
+			rpanel->hide ();
+
+			connect (map, &MapView::routeChanged, this, &Main::showRoute);
+
 			QVBoxLayout *lay = new QVBoxLayout (this);
 			lay->setContentsMargins (0, 0, 0, 0);
 			lay->setSpacing (0);
 			lay->addWidget (map, 1);
 			lay->addWidget (bar);
 			lay->addWidget (panel);
+			lay->addWidget (rpanel);
+			lay->addWidget (finish);
 			lay->addWidget (line);
 			lay->addWidget (buttons);
 
 			connect (map, &MapView::forecastTimeChanged,
 			         this, &Main::showStamp);
+			connect (map, &MapView::forecastTimeChanged,
+			         this, &Main::updateBoat);
 
 			// Карты лежат в APK; раскладываем при первом запуске.
 			if (!AppData::ready()) {
-				say (QStringLiteral("Раскладываю карты…"), false);
+				say (tr("Раскладываю карты…"), false);
 				load->setEnabled (false);
 				bar->show ();
 				QApplication::processEvents ();
@@ -281,16 +420,19 @@ class Main : public QWidget
 			// Белые стрелки поверх поля скорости не читаются.
 			Settings::setUserSetting ("windArrowsColorForced", "#141414");
 			map->loadMaps ();
+			startGps ();
+			loadRoute ();
 			openLast ();
+			loadStart ();
 		}
 
 	protected:
 		bool eventFilter (QObject *o, QEvent *e) override
 		{
 			if (o == map && e->type() == QEvent::Resize) {
-				placeStamp ();
 				placeLayers ();
 				placeScale ();
+				placeOwnButton ();
 			}
 			return QWidget::eventFilter (o, e);
 		}
@@ -316,11 +458,246 @@ class Main : public QWidget
 			showScale ();
 		}
 
+		// Маршрут и настройки делят одно место внизу.
+		void toggleRoute ()
+		{
+			bool show = !rpanel->isVisible () && !finish->isVisible ();
+			wantRoute = show;
+			if (show && panel->isVisible())
+				togglePanel ();
+			// Дата выхода должна лежать внутри прогноза: иначе считать
+			// нечего, а на экране получается «выход 01.01».
+			if (show && !startInForecast())
+				resetStart ();
+			if (map->routeMode() != MapView::NoRoute)
+				map->setRouteMode (MapView::NoRoute);
+			rpanel->setVisible (show);
+			finish->hide ();
+			buttons->setVisible (!show);
+			line->setVisible (!show);
+			showRoute ();
+		}
+
+		// Работа с маршрутом: панель уходит, внизу одна кнопка.
+		void setMode (int mode)
+		{
+			map->setRouteMode (mode);
+			// Подсказку показываем табличкой поверх карты: на кнопке она
+			// не помещается, а обрезанный текст хуже, чем никакой.
+			if (mode == MapView::DrawRoute)
+				say (tr("Касайтесь карты — ставьте точки"), false);
+			else if (mode == MapView::EditRoute)
+				say (tr("Тяните точки · долгое нажатие удалит"),
+				     false);
+			else
+				showStamp ();
+			bool busy = (mode != MapView::NoRoute);
+			rpanel->setVisible (!busy && wantRoute);
+			finish->setVisible (busy);
+			buttons->setVisible (!busy && !wantRoute && !panel->isVisible());
+			line->setVisible (buttons->isVisible());
+			showRoute ();
+		}
+
+		// Длина и время в пути. Скорость судовая, отсчёт — от показанного
+		// срока прогноза плюс задержка старта.
+		void showRoute ()
+		{
+			int n = map->route().size ();
+			if (n < 2) {
+				QString hint = tr("Маршрут не проложен");
+				if (map->routeMode() == MapView::DrawRoute)
+					hint = tr("Касайтесь карты — ставьте точки");
+				else if (map->routeMode() == MapView::EditRoute)
+					hint = tr("Касайтесь карты — ставьте точки");
+				plan->setText (hint);
+				updateBoat ();
+				setFinishText (n == 1
+				               ? tr("Закончить · %n точка(и)", "", 1)
+				               : tr("Закончить"));
+				saveRoute ();
+				return;
+			}
+			double miles = map->routeMiles ();
+			double knots = speedK->value() + speedT->value()/10.0;
+			double hours = miles / qMax (0.1, knots);
+			QDateTime go = startMoment ();
+			QDateTime in = go.addSecs (qint64 (hours * 3600));
+			QString when = tr(" · выход %1 · приход %2")
+			                   .arg (go.toOffsetFromUtc (tz*3600)
+			                           .toString ("dd.MM HH:mm"))
+			                   .arg (in.toOffsetFromUtc (tz*3600)
+			                           .toString ("dd.MM HH:mm"));
+			int mi = int (miles + 0.5);
+			int hh = int (hours);
+			int mm = int ((hours - hh) * 60 + 0.5);
+			saveStart ();
+			updateBoat ();
+			// Склонение отдаём Qt: в русском три формы, в английском две,
+			// в турецком одна — руками это не сложить.
+			QString pts  = tr("%n точка(и)", "", n);
+			QString mls  = tr("%n миля(и)", "", mi);
+			QString went = hh > 0 ? tr("%1 ч %2 мин").arg(hh).arg(mm)
+			                      : tr("%1 мин").arg(mm);
+			setFinishText (tr("Закончить · %1 · %2").arg (pts).arg (mls));
+			plan->setText (tr("%1 · %2 · %3%4")
+			                   .arg (pts).arg (mls).arg (went).arg (when));
+			saveRoute ();
+		}
+
+		// Где судно к показанному сроку: прошло столько миль, сколько
+		// успело от выхода со своей скоростью.
+		void updateBoat ()
+		{
+			QDateTime shown;
+			if (map->route().size() < 2
+			 || !map->forecastTimes (&shown, nullptr)) {
+				map->setBoatMiles (-1);
+				return;
+			}
+			double knots = speedK->value() + speedT->value()/10.0;
+			double hours = startMoment().secsTo (shown) / 3600.0;
+			// До выхода судно стоит в начальной точке, после прихода —
+			// в конечной: лучше показать его на месте, чем убрать.
+			map->setBoatMiles (qMax (0.0, hours) * knots);
+		}
+
+		// Момент выхода. Год берём от показанного срока прогноза: на
+		// экране его нет и не нужно, а маршрут прокладывают на ближайшие
+		// дни, не на следующий год.
+		QDateTime startMoment () const
+		{
+			QDateTime shown = QDateTime::currentDateTimeUtc ();
+			map->forecastTimes (&shown, nullptr);
+			QDate base = shown.toOffsetFromUtc (tz*3600).date ();
+			int year = yearForStart (base.year(), base.month(), base.day(),
+			                         monW->value(), dayW->value());
+			QDate d (year, monW->value(), qMin (dayW->value(),
+			         QDate (year, monW->value(), 1).daysInMonth()));
+			QDateTime go (d, QTime (hourW->value(), minW->value()*5),
+			              QTimeZone::fromSecondsAheadOfUtc (tz*3600));
+			return go.toUTC ();
+		}
+
+		// Лежит ли выбранный выход внутри загруженного прогноза.
+		bool startInForecast () const
+		{
+			QList<QDateTime> all = map->forecastSteps ();
+			if (all.isEmpty())
+				return true;         // прогноза нет — проверять нечего
+			QDateTime go = startMoment ();
+			return go >= all.first().addSecs (-12*3600)
+			    && go <= all.last();
+		}
+
+		// Ставим колёса на показанный срок: чаще всего от него и идут.
+		void resetStart ()
+		{
+			QDateTime shown;
+			if (!map->forecastTimes (&shown, nullptr))
+				return;
+			QDateTime t = shown.toOffsetFromUtc (tz*3600);
+			dayW->setValue (t.date().day());
+			monW->setValue (t.date().month());
+			hourW->setValue (t.time().hour());
+			minW->setValue (t.time().minute()/5);
+			saveStart ();
+		}
+
+		// Выход и ход запоминаем: маршрут прокладывают на переход, а не
+		// на запуск приложения.
+		void saveStart ()
+		{
+			QStringList v;
+			for (Wheel *w : {dayW, monW, hourW, minW, speedK, speedT})
+				v << QString::number (w->value());
+			Settings::setUserSetting ("routeStart", v.join (","));
+		}
+
+		void loadStart ()
+		{
+			QStringList v = Settings::getUserSetting ("routeStart", "")
+			                    .toString().split (',');
+			if (v.size() != 6) {
+				resetStart ();
+				return;
+			}
+			dayW  ->setValue (v.at(0).toInt());
+			monW  ->setValue (v.at(1).toInt());
+			hourW ->setValue (v.at(2).toInt());
+			minW  ->setValue (v.at(3).toInt());
+			speedK->setValue (v.at(4).toInt());
+			speedT->setValue (v.at(5).toInt());
+			if (!startInForecast())
+				resetStart ();
+		}
+
+		// Надпись на кнопке не должна обрезаться: если полная не влезает
+		// по ширине, оставляем короткую.
+		void setFinishText (const QString &full)
+		{
+			QFontMetrics fm (finish->font());
+			finish->setText (fm.horizontalAdvance (full) < finish->width() - 40
+			                 ? full : tr("Закончить"));
+		}
+
+		// Своё место: спрашиваем разрешение, потом слушаем GPS.
+		void startGps ()
+		{
+			QLocationPermission perm;
+			perm.setAccuracy (QLocationPermission::Precise);
+			qApp->requestPermission (perm, this, [this](const QPermission &p) {
+				if (p.status() != Qt::PermissionStatus::Granted) {
+					say (tr("Без разрешения на место GPS не работает"), true);
+					return;
+				}
+				gps = QGeoPositionInfoSource::createDefaultSource (this);
+				if (gps == nullptr) {
+					say (tr("GPS в этом телефоне недоступен"), true);
+					return;
+				}
+				connect (gps, &QGeoPositionInfoSource::positionUpdated,
+				         this, &Main::gotPos);
+				gps->setUpdateInterval (3000);
+				gps->startUpdates ();
+			});
+		}
+
+		void gotPos (const QGeoPositionInfo &info)
+		{
+			if (!info.isValid())
+				return;
+			QGeoCoordinate c = info.coordinate ();
+			double acc = info.hasAttribute (QGeoPositionInfo::HorizontalAccuracy)
+			             ? info.attribute (QGeoPositionInfo::HorizontalAccuracy)
+			             : 0.0;
+			map->setOwnPos (c.longitude(), c.latitude(), acc);
+		}
+
+		// Кнопка ставит своё место в середину экрана. Пока места нет,
+		// говорим об этом прямо, а не молчим.
+		void goToOwnPos ()
+		{
+			if (!map->hasOwnPos()) {
+				say (tr("Место ещё не определено"), false);
+				return;
+			}
+			map->setCenter (map->ownPos().x(), map->ownPos().y());
+		}
+
+		void showInfo ()
+		{
+			say (tr("Слои — язычком слева, срок — стрелками "
+			        "или шкалой, маршрут — значком с точками."), false);
+		}
+
 		void togglePanel ()
 		{
 			// Пока настраивают прогноз, ни кнопки, ни шкала времени не
 			// нужны: место лучше отдать карте.
 			bool show = !panel->isVisible ();
+			if (show && rpanel->isVisible())
+				toggleRoute ();
 			panel->setVisible (show);
 			buttons->setVisible (!show);
 			line->setVisible (!show);
@@ -342,6 +719,33 @@ class Main : public QWidget
 			wall = QDateTime ();
 			map->showForecastStep (i);
 			line->setIndex (map->forecastIndex());
+		}
+
+		// Языки: первый — «как в телефоне», остальные по списку.
+		static int langCount ()   { return 13; }
+
+		static QString langCode (int i)
+		{
+			static const char *c[] = {"", "ru", "en", "de", "fr", "es", "it",
+			                          "tr", "az", "fa", "tk", "ar", "zh"};
+			return QString::fromLatin1 (c[qBound (0, i, langCount()-1)]);
+		}
+
+		static QString langName (int i)
+		{
+			static const char *n[] = {"авто", "Рус", "Eng", "Deu", "Fra",
+			                          "Esp", "Ita", "Tür", "Aze", "فا",
+			                          "Tkm", "عر", "中文"};
+			return QString::fromUtf8 (n[qBound (0, i, langCount()-1)]);
+		}
+
+		// Язык меняется без перезапуска только частично: надписи, уже
+		// нарисованные, перерисуются, а выложенные подписи колёс — нет.
+		// Поэтому просим перезапустить.
+		void setLang (int i)
+		{
+			Settings::setUserSetting ("language", langCode (i));
+			say (tr("Язык сменится при следующем запуске"), false);
 		}
 
 		// Пояс меняется в шторке, отзываться должно всё сразу.
@@ -382,8 +786,7 @@ class Main : public QWidget
 
 			load->setEnabled (false);
 			bar->show ();
-			stamp->show ();
-			BarProgress pr (bar, stamp);
+			BarProgress pr (bar, [this](const QString &t) { say (t, false); });
 			QByteArray data;
 			QDateTime t0 = QDateTime::currentDateTime ();
 			QStringList trouble;
@@ -430,7 +833,7 @@ class Main : public QWidget
 					togglePanel ();
 			}
 			else {
-				say (trouble.isEmpty() ? QStringLiteral("данных нет")
+				say (trouble.isEmpty() ? tr("данных нет")
 				                       : trouble.first(), true);
 			}
 		}
@@ -441,7 +844,7 @@ class Main : public QWidget
 		{
 			QDateTime shown, last;
 			if (!map->forecastTimes (&shown, &last)) {
-				stamp->hide ();
+				say (QString(), false);
 				return;
 			}
 			bool stale = last < QDateTime::currentDateTimeUtc ();
@@ -449,11 +852,39 @@ class Main : public QWidget
 			// разойтись с прогнозом на несколько часов.
 			say (shown.toOffsetFromUtc (tz*3600).toString ("dd.MM  HH:mm")
 			     + QStringLiteral("  ") + zoneName()
-			     + (stale ? QStringLiteral("  · устарел") : QString()),
+			     + (stale ? tr("  · устарел") : QString()),
 			     stale);
 		}
 
 	private:
+		// Маршрут переживает выход из приложения: его прокладывают один
+		// раз на переход, а не на запуск.
+		void saveRoute ()
+		{
+			// Числа пишем через QString::number: arg(double) на русской
+			// локали ставит десятичную запятую — ту же, что разделяла бы
+			// долготу и широту, и при чтении строка рассыпалась.
+			QStringList out;
+			for (const QPointF &p : map->route())
+				out << QStringLiteral("%1 %2")
+				        .arg (QString::number (p.x(), 'f', 6),
+				              QString::number (p.y(), 'f', 6));
+			Settings::setUserSetting ("route", out.join (";"));
+		}
+
+		void loadRoute ()
+		{
+			QList<QPointF> pts;
+			QString sv = Settings::getUserSetting ("route", "").toString();
+			for (const QString &one : sv.split (';', Qt::SkipEmptyParts)) {
+				QStringList xy = one.simplified().split (' ');
+				if (xy.size() == 2)
+					pts << QPointF (xy.at(0).toDouble(), xy.at(1).toDouble());
+			}
+			if (!pts.isEmpty())
+				map->setRoute (pts);
+		}
+
 		QString lastPath () const
 		{
 			return AppData::dataDir() + "/forecast.grb2";
@@ -553,6 +984,12 @@ class Main : public QWidget
 			scale->raise ();
 		}
 
+		void placeOwnButton ()
+		{
+			locate->move (map->width() - 52 - 14, map->height() - 52 - 14);
+			locate->raise ();
+		}
+
 		void placeLayers ()
 		{
 			layers->refit ();
@@ -577,23 +1014,11 @@ class Main : public QWidget
 			forward->setEnabled (has);
 		}
 
+		// Табличку вверху рисует карта: надпись со стилевым фоном поверх
+		// неё жила в других координатах и обрезала текст.
 		void say (const QString &text, bool alarm)
 		{
-			stamp->setStyleSheet (QStringLiteral(
-			    "background: rgba(%1, 205); color: white;"
-			    "padding: 7px 16px; font-size: 17px; font-weight: bold;"
-			    "border-radius: 13px;")
-			    .arg (alarm ? "150,45,35" : "20,40,60"));
-			stamp->setText (text);
-			stamp->adjustSize ();
-			stamp->show ();
-			placeStamp ();
-		}
-
-		void placeStamp ()
-		{
-			stamp->move ((map->width() - stamp->width())/2, 12);
-			stamp->raise ();
+			map->setStamp (text, alarm);
 		}
 
 		QPushButton *button (const QString &text, bool accent)
@@ -610,27 +1035,62 @@ class Main : public QWidget
 		}
 
 		MapView      *map;
-		QLabel       *stamp;
 		TimeBar      *line;
 		Wheel        *days;
 		Wheel        *step;
 		Wheel        *zone;
+		Wheel        *lang;
 		int           tz;        // пояс показа, часов от UTC
 		QDateTime     wall;      // показание часов, которое держим при
 		                         // переводе пояса
-		QPushButton  *back;
-		QPushButton  *forward;
-		QPushButton  *setup;
-		QPushButton  *load;
+		IconButton   *back;
+		IconButton   *forward;
+		IconButton   *setup;
+		IconButton   *route;
+		IconButton   *load;
+		IconButton   *info;
+		Wheel        *dayW;
+		Wheel        *monW;
+		Wheel        *hourW;
+		Wheel        *minW;
+		Wheel        *speedK;
+		Wheel        *speedT;
+		QPushButton  *draw;
+		QPushButton  *edit;
+		QPushButton  *wipe;
+		QPushButton  *finish;
+		bool          wantRoute = false;
+		QLabel       *plan;
+		QWidget      *rpanel;
 		QWidget      *panel;
 		QWidget      *buttons;
 		LayerBar     *layers;
 		ScaleBar     *scale;
 		QPushButton  *tab;
+		IconButton   *locate;
+		QGeoPositionInfoSource *gps = nullptr;
 		QProgressBar *bar;
 };
 
 #include "main.moc"
+
+//---------------------------------------------------------------------
+// Переводы лежат рядом с картами, внутри APK. Их два: свой, для надписей
+// приложения, и движка — из него приходят единицы вроде «м/с».
+static void loadTranslations (QApplication &app)
+{
+	QString code = Settings::getUserSetting ("language", "").toString();
+	if (code.isEmpty())
+		code = QLocale::system().name().left (2);
+	QLocale::setDefault (QLocale (code));
+
+	QString dir = AppData::dataDir() + "/data/tr/";
+	static QTranslator own, engine;
+	if (own.load ("makgrib_" + code, dir))
+		app.installTranslator (&own);
+	if (engine.load ("xyGrib_" + code, dir))
+		app.installTranslator (&engine);
+}
 
 //---------------------------------------------------------------------
 int main (int argc, char **argv)
@@ -639,6 +1099,11 @@ int main (int argc, char **argv)
 	QCoreApplication::setOrganizationName ("MAKGrib");
 	QCoreApplication::setApplicationName ("MAKGrib");
 	Settings::initializeSettingsDir ();
+	// Сначала доложить новые файлы из APK, потом читать переводы: иначе
+	// после обновления приложения они останутся от прошлой сборки.
+	if (AppData::ready())
+		AppData::syncNew ();
+	loadTranslations (app);
 
 	Main w;
 	w.setWindowTitle ("MAKGrib");

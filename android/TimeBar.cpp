@@ -73,7 +73,7 @@ void TimeBar::paintEvent (QPaintEvent *)
 		p.setPen (QColor (0x88, 0x99, 0xaa));
 		QFont f = font ();  f.setPixelSize (15);  p.setFont (f);
 		p.drawText (rect(), Qt::AlignCenter,
-		            QStringLiteral("прогноз не загружен"));
+		            tr("прогноз не загружен"));
 		return;
 	}
 
