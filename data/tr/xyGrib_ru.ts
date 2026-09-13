@@ -2858,6 +2858,14 @@
         <translation>Прогноз, открытый в прошлый раз, устарел</translation>
     </message>
     <message>
+        <source>EXPIRED FORECAST</source>
+        <translation>ПРОГНОЗ УСТАРЕЛ</translation>
+    </message>
+    <message>
+        <source>shown for want of a newer one</source>
+        <translation>показан за неимением свежего</translation>
+    </message>
+    <message>
         <location filename="../../src/MainWindow.cpp" line="1138" />
         <source>not shown</source>
         <translation>не показан</translation>

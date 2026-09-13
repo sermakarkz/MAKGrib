@@ -1131,14 +1131,20 @@ void MainWindow::openMeteoDataFile (const QString& fileName, bool automatic)
 			               .toString ("yyyy-MM-dd HH:mm") + " UTC";
 			setCursor (oldcursor);
 			if (automatic) {
-				// Reopened by itself at start-up: drop it without asking.
-				slotFile_Close ();
+				// Reopened by itself at start-up. It used to be dropped,
+				// but at sea there may be no internet for a week, and
+				// yesterday's wind beats an empty screen — as long as it
+				// is never taken for today's. Hence the title and the
+				// message that stays in the status bar.
+				setWindowTitle (windowTitle() + "  —  "
+				                + tr("EXPIRED FORECAST") + " (" + when + ")");
 				statusBar->showMessage (
 				        tr("The forecast last opened has expired")
-				        + " (" + when + ") — " + tr("not shown"), 10000);
-				return;
+				        + " (" + when + ") — "
+				        + tr("shown for want of a newer one"), 0);
+				setCursor (Qt::WaitCursor);
 			}
-			if (QMessageBox::question (this, tr("Expired forecast"),
+			else if (QMessageBox::question (this, tr("Expired forecast"),
 			        tr("File :") + fileName + "\n\n"
 			        + tr("This forecast ends at %1, which is already past.")
 			          .arg (when) + "\n\n"
@@ -1149,7 +1155,11 @@ void MainWindow::openMeteoDataFile (const QString& fileName, bool automatic)
 				slotFile_Close ();
 				return;
 			}
-			setCursor (Qt::WaitCursor);
+			else {
+				setWindowTitle (windowTitle() + "  —  "
+				                + tr("EXPIRED FORECAST") + " (" + when + ")");
+				setCursor (Qt::WaitCursor);
+			}
 		}
 
 		menuBar->updateDateSelector( );
