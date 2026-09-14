@@ -23,7 +23,18 @@ endif()
 # PROJ здесь нет намеренно: он тянет SQLite и базу координатных систем.
 # Остаются проекции на собственной арифметике — Projection_ZYGRIB и
 # Projection_MERCATOR_Simple.
-add_compile_definitions(MAKGRIB_NO_PROJ MAKGRIB_NO_POI MAKGRIB_THREAD_DRAW)
+# Номер версии живёт в одном месте — в манифесте. Отсюда он же попадает
+# в код, чтобы приложению было с чем сравнивать при проверке обновлений.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/package/AndroidManifest.xml" MANIFEST_TEXT)
+string(REGEX MATCH "android:versionCode=\"([0-9]+)\"" _vc "${MANIFEST_TEXT}")
+set(APP_VERSION_CODE "${CMAKE_MATCH_1}")
+string(REGEX MATCH "android:versionName=\"([^\"]+)\"" _vn "${MANIFEST_TEXT}")
+set(APP_VERSION_NAME "${CMAKE_MATCH_1}")
+message(STATUS "MAKGrib ${APP_VERSION_NAME} (${APP_VERSION_CODE})")
+
+add_compile_definitions(MAKGRIB_NO_PROJ MAKGRIB_NO_POI MAKGRIB_THREAD_DRAW
+    MAKGRIB_VERSION_CODE=${APP_VERSION_CODE}
+    MAKGRIB_VERSION_NAME="${APP_VERSION_NAME}")
 
 # Version.h порождается из шаблона, как и в настольной сборке.
 set(VERSION_MAJOR 1)
