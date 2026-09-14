@@ -94,6 +94,40 @@ echo "=== Проекция Меркатора без PROJ ==="
 QT_QPA_PLATFORM=offscreen "$SRC/build/mercatortest" 2>&1 | grep -v "^qt\."
 MERC=${PIPESTATUS[0]}
 
+# Склейка плиток: прогноз, нарезанный квадратами, должен читаться так же,
+# как тот же участок одним куском. Своего сервера, который резал бы под
+# экран, у нас нет — квадраты нарезаны заранее и сходятся уже у читателя.
+TILE=0
+if [ -f "$SRC/tests/data/tiles.grb2" ]; then
+  cd "$SRC/build/src"
+  /usr/bin/c++ -std=gnu++11 -isysroot "$SDK" -isystem "$SDK/usr/include/c++/v1" -arch arm64 \
+    -I"$SRC/src" -I"$SRC/src/util" -I"$SRC/src/map" -I"$SRC/src/GUI" \
+    -I"$SRC/src/forecast" -I"$SRC/src/g2clib-1.6.0" \
+    -I. -I./GUI -I./map -I./util -F"$QT/lib" \
+    -I"$QT/lib/QtCore.framework/Headers"    -I"$QT/lib/QtGui.framework/Headers" \
+    -I"$QT/lib/QtWidgets.framework/Headers" -I"$QT/lib/QtNetwork.framework/Headers" \
+    -I"$QT/lib/QtXml.framework/Headers"     -I"$QT/lib/QtPrintSupport.framework/Headers" \
+    -I"$(brew --prefix libnova)/include" -I"$(brew --prefix proj)/include" \
+    -I"$(brew --prefix openjpeg)/include/openjpeg-2.5" -I/opt/homebrew/include \
+    "$SRC/tests/tiletest.cpp" "${OBJS[@]}" \
+    g2clib-1.6.0/libg2clib.a GUI/libgui.a util/libutil.a map/libmap.a \
+    "$(brew --prefix libnova)/lib/libnova.a" \
+    "$(brew --prefix openjpeg)/lib/libopenjp2.dylib" \
+    "$(brew --prefix proj)/lib/libproj.dylib" /opt/homebrew/lib/libpng.dylib -lbz2 -lz \
+    -framework QtCore -framework QtGui -framework QtWidgets -framework QtNetwork \
+    -framework QtXml -framework QtPrintSupport \
+    -o "$SRC/build/tiletest"
+  cd "$SRC"
+  echo
+  echo "=== Склейка плиток прогноза ==="
+  QT_QPA_PLATFORM=offscreen "$SRC/build/tiletest" "$SRC/tests/data" 2>&1 | grep -v "^qt\."
+  TILE=${PIPESTATUS[0]}
+else
+  echo
+  echo "=== Склейка плиток: образцов нет, пропущено ==="
+  echo "    сделать: python3 tests/maketiles.py"
+fi
+
 # Год для даты выхода: Qt здесь не нужен, правило чистое.
 echo
 echo "=== Год маршрута через Новый год ==="
@@ -101,4 +135,4 @@ c++ -std=c++17 -o "$SRC/build/routetest" "$SRC/tests/routetest.cpp"
 "$SRC/build/routetest"
 ROUTE=$?
 
-exit $(( BOAT + MERC + ROUTE ))
+exit $(( BOAT + MERC + TILE + ROUTE ))
