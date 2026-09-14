@@ -1470,3 +1470,102 @@ data_t GribRecord::getValueOnRegularGrid (int i, int j ) const
     return getValue (i,j);
 }
 
+
+//--------------------------------------------------------------------------
+// Склейка плиток в одну запись.
+//
+// Раздавать прогноз кусками приходится потому, что своего сервера,
+// который резал бы данные под экран, у нас нет: квадраты нарезаны
+// заранее и лежат готовыми. Но движок на каждый срок держит ровно одну
+// запись — getRecord() возвращает первую подходящую, и все остальные
+// плитки пропали бы впустую. Значит, собрать их надо здесь, сразу после
+// чтения, пока никто ещё не спрашивал значений.
+//
+// Сетка после чтения уже приведена к общему виду: начало в (xmin,ymin),
+// шаги Di и Dj положительные. Поэтому смещение плитки — это просто
+// разность начал, делённая на шаг, и никакого пересчёта значений не
+// нужно: точки одной плитки ложатся ровно в узлы общей сетки.
+//--------------------------------------------------------------------------
+GribRecord * GribRecord::stitch (const std::vector<GribRecord *> &tiles)
+{
+    if (tiles.empty())
+        return nullptr;
+    if (tiles.size() == 1)
+        return nullptr;          // склеивать нечего
+
+    const GribRecord *first = tiles[0];
+    const double Di0 = first->Di, Dj0 = first->Dj;
+    if (Di0 <= 0 || Dj0 <= 0)
+        return nullptr;
+
+    // Плитки должны быть с одного исходного поля: шаг сетки один и тот
+    // же, и узлы совпадают. Если хоть одна выбивается — не наш случай,
+    // пусть движок работает по-старому.
+    double Xmin = first->xmin, Ymin = first->ymin;
+    double Xmax = first->xmax, Ymax = first->ymax;
+    for (auto t : tiles) {
+        if (t == nullptr || !t->isOk())
+            return nullptr;
+        if (fabs (t->Di - Di0) > Di0*1e-6 || fabs (t->Dj - Dj0) > Dj0*1e-6)
+            return nullptr;
+        if (t->xmin < Xmin) Xmin = t->xmin;
+        if (t->ymin < Ymin) Ymin = t->ymin;
+        if (t->xmax > Xmax) Xmax = t->xmax;
+        if (t->ymax > Ymax) Ymax = t->ymax;
+    }
+    for (auto t : tiles) {
+        double fi = (t->xmin - Xmin) / Di0;
+        double fj = (t->ymin - Ymin) / Dj0;
+        if (fabs (fi - floor (fi + 0.5)) > 0.01
+         || fabs (fj - floor (fj + 0.5)) > 0.01)
+            return nullptr;      // узлы не совпадают — не склеить
+    }
+
+    const int Ni2 = (int) floor ((Xmax - Xmin)/Di0 + 0.5) + 1;
+    const int Nj2 = (int) floor ((Ymax - Ymin)/Dj0 + 0.5) + 1;
+    if (Ni2 <= 0 || Nj2 <= 0)
+        return nullptr;
+    // Целая планета в подобной сборке не ожидается, но память бережём:
+    // при нелепых числах лучше отступить, чем просить гигабайт.
+    if ((double) Ni2 * Nj2 > 40e6)
+        return nullptr;
+
+    GribRecord *r = new GribRecord ();
+    *r = *first;                 // коды, даты, признаки — от первой плитки
+    // Указатели достались от плитки по значению; они принадлежат ей, и
+    // освобождать их в своём разрушителе мы не имеем права.
+    r->BMSbits    = nullptr;
+    r->boolBMStab = nullptr;
+    r->setDuplicated (true);
+
+    r->Ni = Ni2;   r->Nj = Nj2;
+    r->xmin = Xmin; r->ymin = Ymin;
+    r->xmax = Xmin + Di0*(Ni2-1);
+    r->ymax = Ymin + Dj0*(Nj2-1);
+    r->entireWorldInLongitude = false;
+    r->grid = std::make_shared<PlateCarree> (Ni2, Nj2, Xmin, Ymin, Di0, Dj0);
+
+    const int size = Ni2*Nj2;
+    auto *buf = new data_t [size];
+    for (int i=0; i<size; i++)
+        buf[i] = GRIB_NOTDEF;    // дырка между плитками остаётся дыркой
+    r->data = std::shared_ptr<data_t> (buf, std::default_delete<data_t[]>());
+
+    for (auto t : tiles) {
+        const int oi = (int) floor ((t->xmin - Xmin)/Di0 + 0.5);
+        const int oj = (int) floor ((t->ymin - Ymin)/Dj0 + 0.5);
+        for (int j=0; j<t->Nj; j++) {
+            const int J = oj + j;
+            if (J < 0 || J >= Nj2)
+                continue;
+            for (int i=0; i<t->Ni; i++) {
+                const int I = oi + i;
+                if (I < 0 || I >= Ni2)
+                    continue;
+                if (t->hasValue (i, j))
+                    buf [J*Ni2 + I] = t->getValue (i, j);
+            }
+        }
+    }
+    return r;
+}

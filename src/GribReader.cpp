@@ -17,6 +17,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ***********************************************************************/
 
 #include <cassert>
+#include <map>
+#include <vector>
 
 #include "GribReader.h"
 #include "Util.h"
@@ -45,6 +47,7 @@ void GribReader::openFile (const QString &fname, int nbrecs)
 	
     if (!fname.isEmpty()) {
         openFilePriv (fname, nbrecs);
+		mergeTiles ();
 		createListDates ();
 		ok = getNumberOfDates() > 0;
 		if (ok) {
@@ -1170,6 +1173,75 @@ GribRecord * GribReader::getRecord (DataCode dtc, time_t date)
         }
     }
     return res;
+}
+
+//-------------------------------------------------------
+// Прогноз, нарезанный плитками, приходит так: на один и тот же срок в
+// файле лежит несколько кусков сетки — сколько квадратов накрыли экран.
+// Движок этого не ждёт: getRecord() отдаёт первую запись с нужным сроком,
+// и все прочие плитки остались бы мёртвым грузом. Поэтому сводим их в
+// одну запись сразу после чтения файла.
+//
+// Для обычного прогноза, где на срок одна запись, проход ничего не делает
+// и ничего не стоит.
+//-------------------------------------------------------
+void GribReader::mergeTiles ()
+{
+	for (auto const &it : mapGribRecords)
+	{
+		std::vector<std::shared_ptr<GribRecord>> *ls = it.second;
+		if (ls == nullptr || ls->size() < 2)
+			continue;
+
+		// Сгруппировать по сроку, сохраняя порядок появления: он же
+		// порядок времени, и ломать его нельзя — по нему ищут соседние
+		// сроки для межвременной интерполяции.
+		std::vector<time_t> order;
+		std::map <time_t, std::vector<GribRecord *>> byDate;
+		for (auto &sp : *ls) {
+			GribRecord *rec = sp.get();
+			if (rec == nullptr || !rec->isOk())
+				continue;
+			time_t d = rec->getRecordCurrentDate();
+			if (byDate.find(d) == byDate.end())
+				order.push_back (d);
+			byDate[d].push_back (rec);
+		}
+
+		bool tiled = false;
+		for (auto const &g : byDate) {
+			if (g.second.size() > 1) {
+				tiled = true;
+				break;
+			}
+		}
+		if (!tiled)
+			continue;
+
+		std::vector<std::shared_ptr<GribRecord>> merged;
+		for (time_t d : order) {
+			std::vector<GribRecord *> &g = byDate[d];
+			GribRecord *one = GribRecord::stitch (g);
+			if (one != nullptr) {
+				merged.push_back (std::shared_ptr<GribRecord>(one));
+				// Границы карты считались по плиткам, но склейка может
+				// быть шире каждой из них по отдельности.
+				if (xmin > one->getXmin()) xmin = one->getXmin();
+				if (xmax < one->getXmax()) xmax = one->getXmax();
+				if (ymin > one->getYmin()) ymin = one->getYmin();
+				if (ymax < one->getYmax()) ymax = one->getYmax();
+			}
+			else {
+				// Склеить не вышло (разные сетки, не совпали узлы) —
+				// оставляем как было, чтобы не потерять данные вовсе.
+				for (auto &sp : *ls)
+					if (sp.get() != nullptr
+					 && sp->getRecordCurrentDate() == d)
+						merged.push_back (sp);
+			}
+		}
+		*ls = merged;
+	}
 }
 
 //-------------------------------------------------------

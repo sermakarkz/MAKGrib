@@ -116,6 +116,10 @@ class GribReader : public RegularGridReader, public LongTaskMessage
     private:
         bool checkAndStoreRecordInMap (GribRecord *rec);
         bool storeRecordInMap (GribRecord *rec);
+		// Прогноз, собранный из плиток: на один срок приходит несколько
+		// кусков сетки. Сводим их в одну запись — движок держит на срок
+		// ровно одну и остальные куски не увидел бы.
+		void mergeTiles ();
 		void readGribFileContent (int nbrecs);
 		bool readGribRecord(int id);
 		//bool readGrib2Record(int id);

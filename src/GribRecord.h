@@ -24,6 +24,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <stdint.h>
 #include <cstdint>
 #include <memory>
+#include <vector>
 
 #include "zuFile.h"
 #include "RegularGridded.h"
@@ -142,6 +143,15 @@ class GribRecord : public RegularGridRecord
 		
         bool  isEof () const   {return eof;};
         virtual void  print (const char *title);
+
+        // Собрать одну запись из кусков одной и той же сетки.
+        // Нужно для плиточной раздачи прогноза: телефон берёт с сервера
+        // соседние квадраты, а движок на каждый срок умеет держать лишь
+        // одну запись — лишние куски он просто не заметил бы (getRecord
+        // возвращает первый подходящий). Поэтому склеиваем до него.
+        // Куски должны быть с одним шагом сетки и выровнены по ней;
+        // дырки между ними остаются незаполненными.
+        static GribRecord * stitch (const std::vector<GribRecord *> &tiles);
 
     protected:
         std::shared_ptr<GridType> grid{};
