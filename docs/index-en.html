@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MAKGrib — free GRIB viewer for Android: wind and wave forecasts</title>
+<meta name="description" content="Free marine weather app for Android, Windows, Linux and macOS: wind, gusts, waves, pressure, sea temperature from GRIB files. Works offline, no subscription, no account. XyGrib on a phone.">
+<link rel="canonical" href="https://sermakarkz.github.io/MAKGrib/index-en.html">
+<link rel="alternate" hreflang="ru" href="https://sermakarkz.github.io/MAKGrib/">
+<link rel="alternate" hreflang="en" href="https://sermakarkz.github.io/MAKGrib/index-en.html">
+<meta property="og:title" content="MAKGrib — free GRIB viewer for Android">
+<meta property="og:description" content="Marine weather on your phone. Free, offline, open source.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://sermakarkz.github.io/MAKGrib/index-en.html">
+<meta property="og:image" content="https://sermakarkz.github.io/MAKGrib/img/route.png">
+<link rel="stylesheet" href="style.css">
+
+<header><div class="in">
+  <h1>MAKGrib — GRIB weather on your phone</h1>
+  <p>Wind, gusts, waves and pressure for the sea, on Android, Windows,
+     Linux and macOS. Free, no subscription, works offline.</p>
+</div></header>
+
+<main>
+  <div class="dl">
+    <a href="https://github.com/sermakarkz/MAKGrib/releases/latest">Download</a>
+  </div>
+  <p style="margin-top:6px">Android 9+ · Windows 64-bit · Linux · macOS</p>
+
+  <h2>XyGrib for Android</h2>
+  <p>Sailors have long used the desktop program
+     <a href="https://opengribs.org/en/xygrib">XyGrib</a> (formerly zyGrib)
+     on Windows, Linux and macOS. It has no mobile version, and people
+     have been asking for one on sailing forums for years.</p>
+  <p>MAKGrib is a fork of XyGrib brought to the phone: the same GRIB
+     engine and the same chart, with a screen rebuilt for a finger and a
+     moving deck. Desktop builds exist too — it is one program.</p>
+
+  <h2>What it does</h2>
+  <p>It downloads forecasts straight from the American weather service
+     <b>NOAA</b> for the patch of sea on your screen, not for half the
+     world. The file stays on the device and opens again next time you
+     start: at sea there may be no connection for a week, and that is the
+     point of the program.</p>
+  <ul>
+    <li><b>wind and gusts</b> — barbed arrows over a colour field;</li>
+    <li><b>waves</b> — height, direction and period;</li>
+    <li><b>pressure</b> — isobars over any layer;</li>
+    <li><b>air and sea temperature</b>;</li>
+    <li><b>fog</b> — temperature minus dew point;</li>
+    <li><b>cloud, rain, thunderstorms</b>.</li>
+  </ul>
+  <p><img src="img/layers.png" alt="Layer picker in the MAKGrib marine weather app" loading="lazy"></p>
+
+  <h2>Route and time of arrival</h2>
+  <p>Tap the chart to lay a route, drag the points to adjust. The app
+     computes the distance along great circles, the passage time at your
+     speed and the hour of arrival. The vessel moves along the route as
+     you step through the forecast, so you see which wind it will meet
+     and where.</p>
+  <p><img src="img/route.png" alt="Route on a wind chart with estimated time of arrival" loading="lazy"></p>
+
+  <h2>Weather at a point</h2>
+  <p>Hold your finger on the chart and a small window shows the numbers
+     for that hour: wind and direction, gusts, wave, pressure, air and
+     sea temperature, cloud and rain.</p>
+  <p><img src="img/point.png" alt="Weather readings at a chosen point of the sea" loading="lazy"></p>
+
+  <h2>Where it works</h2>
+  <table>
+    <tr><th>Sea</th><th>Wind, pressure, temperature</th><th>Waves</th></tr>
+    <tr><td>Oceans, Mediterranean, North Sea, Baltic</td><td>yes</td><td>yes</td></tr>
+    <tr><td>Black, Azov, <b>Caspian</b></td><td>yes</td><td>not yet</td></tr>
+  </table>
+  <p>NOAA's wave model does not compute enclosed basins. Waves for the
+     Caspian, Black and Azov seas will come from the German weather
+     service, whose model does cover them — measured, not assumed.</p>
+
+  <h2>How it differs from Windy and the rest</h2>
+  <p>Windy is excellent while you have a connection. At sea you do not.
+     MAKGrib keeps the downloaded forecast on the device and shows it
+     without a network — that is the difference between checking the
+     weather and working with a forecast.</p>
+  <p>No subscription, no account, no advertising, no data collection. The
+     source is open, so the program cannot be closed down or quietly
+     turned into a paid service over its users' heads.</p>
+
+  <h2>Questions</h2>
+  <h3>What does it cost?</h3>
+  <p>Nothing. No paid features, no subscription, no ads.</p>
+  <h3>Do I need internet?</h3>
+  <p>Only to download a forecast. After that it lives on the device.</p>
+  <h3>How big is a forecast?</h3>
+  <p>Usually 200 KB to 1 MB, depending on the area, how many days and the
+     time step.</p>
+  <h3>Can I navigate by it?</h3>
+  <p>No. It is a weather forecast and an aid to planning a passage, not a
+     navigation instrument and not a substitute for official warnings.</p>
+
+  <h2>Download</h2>
+  <div class="dl">
+    <a href="https://github.com/sermakarkz/MAKGrib/releases/latest">All builds</a>
+    <a href="https://github.com/sermakarkz/MAKGrib">Source code</a>
+  </div>
+  <p>For phones pick <code>arm64-v8a</code>; <code>armeabi-v7a</code> is
+     for older 32-bit devices.</p>
+
+  <footer>
+    <p><a href="privacy-en.html">Privacy policy</a> ·
+       <a href="index.html">По-русски</a></p>
+    <p>Free software under the GNU GPL v3, a fork of
+       <a href="https://github.com/opengribs/XyGrib">XyGrib</a>.
+       Forecast data: NOAA / NCEP. Coastline: GSHHG.</p>
+  </footer>
+</main>

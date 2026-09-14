@@ -35,3 +35,10 @@ footer {
   border-top: 1px solid var(--line); margin-top: 40px; padding-top: 18px;
   font-size: 15px; color: #5a6b7c;
 }
+
+/* Снимки экрана: узкие, с рамкой, по центру — телефонный снимок в
+   полную ширину страницы выглядит нелепо. */
+main img {
+  display: block; margin: 8px auto; max-width: 280px; width: 100%;
+  border: 1px solid var(--line); border-radius: 14px;
+}
