@@ -80,7 +80,7 @@ set(ENGINE
     ${TOP}/src/MapDrawer.cpp        ${TOP}/src/LonLatGrid.cpp
 )
 
-qt_add_executable(MAKGrib main.cpp AppData.cpp MapView.cpp Wheel.cpp TimeBar.cpp LayerBar.cpp ScaleBar.cpp IconButton.cpp ${ENGINE})
+qt_add_executable(MAKGrib main.cpp AppData.cpp MapView.cpp Wheel.cpp TimeBar.cpp LayerBar.cpp ScaleBar.cpp IconButton.cpp DwdTiles.cpp DownloadSheet.cpp ${ENGINE})
 
 target_link_libraries(MAKGrib PRIVATE
     Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::Xml Qt6::Concurrent
