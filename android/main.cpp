@@ -378,6 +378,15 @@ class Main : public QWidget
 			lay->addWidget (line);
 			lay->addWidget (buttons);
 
+			// Вид запоминаем, чтобы при следующем запуске открыться там,
+			// где смотрели. Раньше приложение всегда начинало с Каспия —
+			// это годилось, пока им пользовались только там.
+			viewSave.setSingleShot (true);
+			viewSave.setInterval (1500);
+			connect (&viewSave, &QTimer::timeout, this, &Main::saveView);
+			connect (map, &MapView::viewChanged,
+			         this, [this](double, double, double) { viewSave.start(); });
+
 			connect (map, &MapView::forecastTimeChanged,
 			         this, &Main::showStamp);
 			connect (map, &MapView::forecastTimeChanged,
@@ -420,6 +429,7 @@ class Main : public QWidget
 			// Белые стрелки поверх поля скорости не читаются.
 			Settings::setUserSetting ("windArrowsColorForced", "#141414");
 			map->loadMaps ();
+			restoreView ();
 			startGps ();
 			loadRoute ();
 			openLast ();
@@ -668,6 +678,12 @@ class Main : public QWidget
 			if (!info.isValid())
 				return;
 			QGeoCoordinate c = info.coordinate ();
+			// Самый первый запуск на новом телефоне: показываем то место,
+			// где человек находится, а не заранее выбранное нами море.
+			if (!viewKnown) {
+				viewKnown = true;
+				map->setView (c.longitude(), c.latitude(), map->scale());
+			}
 			double acc = info.hasAttribute (QGeoPositionInfo::HorizontalAccuracy)
 			             ? info.attribute (QGeoPositionInfo::HorizontalAccuracy)
 			             : 0.0;
@@ -683,6 +699,29 @@ class Main : public QWidget
 				return;
 			}
 			map->setCenter (map->ownPos().x(), map->ownPos().y());
+		}
+
+		// Где смотрели в прошлый раз.
+		void saveView ()
+		{
+			double lon, lat;
+			map->projection()->screen2map (map->width()/2, map->height()/2,
+			                               &lon, &lat);
+			Settings::setUserSetting ("viewLon", QString::number (lon, 'f', 6));
+			Settings::setUserSetting ("viewLat", QString::number (lat, 'f', 6));
+			Settings::setUserSetting ("viewScale",
+			                          QString::number (map->scale(), 'f', 4));
+		}
+
+		void restoreView ()
+		{
+			QString lo = Settings::getUserSetting ("viewLon", "").toString();
+			QString la = Settings::getUserSetting ("viewLat", "").toString();
+			QString sc = Settings::getUserSetting ("viewScale", "").toString();
+			if (lo.isEmpty() || la.isEmpty())
+				return;                      // первый запуск — вид по умолчанию
+			map->setView (lo.toDouble(), la.toDouble(), sc.toDouble());
+			viewKnown = true;
 		}
 
 		void showInfo ()
@@ -1069,6 +1108,8 @@ class Main : public QWidget
 		QPushButton  *tab;
 		IconButton   *locate;
 		QGeoPositionInfoSource *gps = nullptr;
+		QTimer        viewSave;      // отложенная запись вида
+		bool          viewKnown = false;
 		QProgressBar *bar;
 };
 

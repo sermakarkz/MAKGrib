@@ -100,6 +100,10 @@ class MapView : public QWidget
 		void  showForecastNear (const QDateTime &moment);
 
 		void  setCenter (double lon, double lat);
+		// Куда смотрим и с каким увеличением — одним куском, чтобы
+		// восстановить вид при запуске.
+		void  setView (double lon, double lat, double scale);
+		double scale () const;
 		void  zoomBy (double factor);
 		Projection *projection () const  { return proj; }
 
