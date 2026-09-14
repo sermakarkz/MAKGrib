@@ -20,6 +20,8 @@ MAKGrib для Android.
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QEventLoop>
+#include <QJsonArray>
 #include <QSysInfo>
 #include <QLocale>
 #include <QTranslator>
@@ -783,6 +785,60 @@ class Main : public QWidget
 			});
 		}
 
+		// Волнение для замкнутых морей. У NOAA их нет вовсе: волновая
+		// модель не считает Каспий, Чёрное и Азовское. Мы готовим их
+		// отдельно из немецкой модели и кладём готовыми кусками; здесь
+		// приложение забирает тот кусок, в который попал участок на
+		// экране. Человеку выбирать ничего не надо.
+		void addWaves (double x0, double y0, double x1, double y1,
+		               QByteArray *out, BarProgress &pr)
+		{
+			if (net == nullptr)
+				net = new QNetworkAccessManager (this);
+
+			QByteArray index = getBlocking (QStringLiteral(
+			    "https://github.com/sermakarkz/MAKGrib/releases/"
+			    "download/waves/waves.json"));
+			if (index.isEmpty())
+				return;                      // нет так нет, молча
+
+			QJsonObject root = QJsonDocument::fromJson (index).object();
+			for (const QJsonValue &v : root.value("seas").toArray()) {
+				QJsonObject sea = v.toObject();
+				// Пересекается ли наш участок с этим морем.
+				if (x1 < sea.value("west").toDouble()
+				 || x0 > sea.value("east").toDouble()
+				 || y1 < sea.value("south").toDouble()
+				 || y0 > sea.value("north").toDouble())
+					continue;
+				pr.message (tr("Волнение: %1").arg (sea.value("name").toString()));
+				QByteArray w = getBlocking (QStringLiteral(
+				    "https://github.com/sermakarkz/MAKGrib/releases/"
+				    "download/waves/%1").arg (sea.value("file").toString()));
+				// Записи GRIB просто складываются одна за другой.
+				if (w.startsWith ("GRIB"))
+					out->append (w);
+			}
+		}
+
+		// Простое скачивание с ожиданием: источники прогноза внутри
+		// устроены так же, отдельного потока ради двух запросов заводить
+		// незачем.
+		QByteArray getBlocking (const QString &url)
+		{
+			QNetworkRequest rq { QUrl (url) };
+			rq.setTransferTimeout (60000);
+			QNetworkReply *r = net->get (rq);
+			QEventLoop wait;
+			connect (r, &QNetworkReply::finished, &wait, &QEventLoop::quit);
+			wait.exec ();
+			QByteArray body;
+			if (r->error() == QNetworkReply::NoError)
+				body = r->readAll ();
+			r->deleteLater ();
+			return body;
+		}
+
 		void showInfo ()
 		{
 			say (tr("Слои — язычком слева, срок — стрелками "
@@ -899,6 +955,10 @@ class Main : public QWidget
 				if (!r.ok)
 					trouble << r.error;
 			}
+
+			// Волнение для замкнутых морей — поверх того, что дал NOAA.
+			if (data.size() > 100 && data.startsWith ("GRIB"))
+				addWaves (x0, y0, x1, y1, &data, pr);
 
 			bool ok = false;
 			if (data.size() > 100 && data.startsWith ("GRIB")) {
