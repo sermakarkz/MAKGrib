@@ -1,0 +1,72 @@
+# Прогнозы DWD, нарезанные плитками.
+#
+# У NOAA есть программа на сервере, которая режет прогноз по присланному
+# прямоугольнику. Нам такое повторить нечем — своего сервера нет. Поэтому
+# режем заранее сеткой квадратов, а телефон берёт те, что накрывают его
+# экран, и склеивает их у себя.
+#
+# Резать заранее дёшево: чтобы получить один квадрат, всё равно надо
+# скачать модель целиком, так что сто квадратов стоят столько же, сколько
+# один. Дорого стоят модели, а не районы.
+name: Плитки DWD
+
+on:
+  schedule:
+    # ICON-EU выходит каждые три часа и выкладывается примерно через два.
+    # GWAM и EWAM — в 00 и 12 UTC, выкладываются часа через три.
+    - cron: '40 4,16 * * *'
+  workflow_dispatch:
+    inputs:
+      sets:
+        description: 'Какие наборы (через пробел), пусто — все'
+        required: false
+        default: ''
+      days:
+        description: 'На сколько суток вперёд'
+        required: false
+        default: '5'
+
+permissions:
+  contents: write           # чтобы положить готовые файлы в выпуск
+
+jobs:
+  cut:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Инструменты для GRIB
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq cdo libeccodes-tools python3-numpy
+          python3 -m pip install --quiet eccodes-python || \
+            python3 -m pip install --quiet eccodes
+
+      - name: Нарезать
+        env:
+          DAYS: ${{ github.event.inputs.days || '5' }}
+          WORK: /tmp/dwd
+          OUT: out
+          LC_ALL: C
+        run: python3 tools/dwd-tiles.py ${{ github.event.inputs.sets }}
+
+      - name: Сколько вышло
+        run: |
+          echo "файлов: $(ls out/*.grb2 | wc -l)"
+          du -sh out
+
+      - name: Выложить в выпуск «dwd»
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Выпуск с постоянной меткой: ссылки на плитки не меняются,
+          # приложению не нужно ничего искать.
+          gh release view dwd >/dev/null 2>&1 || \
+            gh release create dwd --title "Прогнозы DWD плитками (обновляется)" \
+              --notes "Прогнозы немецкой службы погоды, нарезанные квадратами. Опись — manifest-v1.json. Обновляются дважды в сутки."
+
+          # Заливаем пачками: файлов тысячи, и одна длинная команда рвётся
+          # на первой же сетевой заминке, теряя всё сделанное.
+          ls out/*.grb2 | xargs -n 60 gh release upload dwd --clobber
+          gh release upload dwd out/*.json --clobber
