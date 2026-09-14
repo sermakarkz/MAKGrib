@@ -173,6 +173,11 @@ def latest_run (base, probe_dir, pattern, runs):
     return best
 
 
+def iso (d, c):
+    """Время выпуска как полагается: 20260914 + 18 -> 2026-09-14T18:00:00Z."""
+    return f"{d[0:4]}-{d[4:6]}-{d[6:8]}T{c}:00:00Z"
+
+
 def tile_key (lon, lat):
     ew = "E" if lon >= 0 else "W"
     ns = "N" if lat >= 0 else "S"
@@ -325,10 +330,10 @@ def build (name, spec):
         return None
 
     size  = spec["tile"]
-    w, e, s_, n = spec["area"]
+    aW, aE, aS, aN = spec["area"]
     tiles = sorted (t for t in sea_tiles (size)
-                    if t[1] + size > w and t[1] < e
-                    and t[0] + size > s_ and t[0] < n)
+                    if t[1] + size > aW and t[1] < aE
+                    and t[0] + size > aS and t[0] < aN)
     log (f"  квадратов с морем в области: {len(tiles)}")
 
     steps = list (range (0, DAYS*24, STEP_HOURS))
@@ -390,13 +395,16 @@ def build (name, spec):
 
     index = f"files-{name}.json"
     with open (os.path.join (OUT, index), "w") as f:
-        json.dump ({"set": name, "run": f"{d}T{c}:00Z",
+        json.dump ({"set": name, "run": iso (d, c),
                     "tile": size, "days": DAYS, "sizes": sizes}, f)
 
     return dict (id=name, title=spec["title"], model=spec["model"],
                  kind=spec["kind"], fields=spec["fields"],
-                 run=f"{d}T{c}:00Z", tile=size, days=DAYS,
+                 run=iso (d, c), tile=size, days=DAYS,
                  hours=DAYS*24, interval=STEP_HOURS,
+                 # Границы набора — чтобы приложение могло сказать «этого
+                 # источника в вашем районе нет», не скачивая опись целиком.
+                 west=aW, east=aE, south=aS, north=aN,
                  tiles=len(sizes), bytes=total, index=index)
 
 

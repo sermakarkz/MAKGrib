@@ -46,6 +46,8 @@ MAKGrib для Android.
 #include "MapView.h"
 #include "TimeBar.h"
 #include "Wheel.h"
+#include "DwdTiles.h"
+#include "DownloadSheet.h"
 
 #include "ForecastSource.h"
 #include "SourceRegistry.h"
@@ -54,6 +56,13 @@ MAKGrib для Android.
 #include "Projection.h"
 #include "Settings.h"
 #include "Util.h"
+
+//---------------------------------------------------------------------
+// Сколько полей приходит от NOAA на каждый срок: ветер по двум осям,
+// давление, температура, влажность, осадки, облачность и волнение.
+// Точное число неважно — оно уходит в множитель оценки веса, который
+// всё равно поправляется по настоящей загрузке.
+static const int NOAA_FIELDS = 8;
 
 //---------------------------------------------------------------------
 // Ход загрузки — в полосу и в табличку поверх карты.
@@ -457,6 +466,16 @@ class Main : public QWidget
 		}
 
 	protected:
+		void resizeEvent (QResizeEvent *e) override
+		{
+			QWidget::resizeEvent (e);
+			// Окно выбора прогноза лежит поверх всего, в выкладке его
+			// нет: иначе оно двигало бы карту, а карта на телефоне
+			// перерисовывается небыстро.
+			if (sheet != nullptr && sheet->isVisible())
+				sheet->setGeometry (rect());
+		}
+
 		bool eventFilter (QObject *o, QEvent *e) override
 		{
 			if (o == map && e->type() == QEvent::Resize) {
@@ -929,36 +948,159 @@ class Main : public QWidget
 			showStamp ();
 		}
 
+		// Кнопка «Скачать» открывает не загрузку, а выбор. У большинства
+		// связь мобильная в роуминге или спутниковая с лимитом; качать
+		// прогноз, не зная заранее его веса, — это как заправляться, не
+		// глядя на счётчик.
 		void download ()
 		{
-			// Область — то, что сейчас на экране. Ничего выделять не надо:
-			// на телефоне это и есть самый естественный выбор.
+			if (net == nullptr)
+				net = new QNetworkAccessManager (this);
+			if (tiles == nullptr)
+				tiles = new DwdTiles (net);
+			if (sheet == nullptr) {
+				sheet = new DownloadSheet (this);
+				sheet->hide ();
+				connect (sheet, &DownloadSheet::dropped, this, [this]() {
+					sheet->hide ();
+				});
+				connect (sheet, &DownloadSheet::go, this, [this]() {
+					QStringList pick = sheet->chosen ();
+					int d = sheet->days(), h = sheet->hourStep();
+					sheet->hide ();
+					days->setValue (d);
+					step->setValue (h);
+					startDownload (pick, d, h);
+				});
+			}
+
 			double x0, y0, x1, y1;
-			map->projection()->getVisibleArea (&x0, &y0, &x1, &y1);
-			if (x0 > x1) std::swap (x0, x1);
-			if (y0 > y1) std::swap (y0, y1);
+			visibleArea (&x0, &y0, &x1, &y1);
+
+			say (tr("Смотрю, что есть на этот район…"), false);
+			tiles->refresh ();
+
+			QList<DownloadSheet::Source> src;
+			// NOAA идёт первой: она есть везде и умеет резать ровно по
+			// экрану, лучше этого мы не сделаем.
+			src << DownloadSheet::Source {
+				QStringLiteral("noaa"), tr("NOAA GFS, 25 км"),
+				tr("ветер, давление, температура, осадки"),
+				QString(), true, false, true };
+			for (const DwdTiles::Set &t : tiles->sets())
+				src << DownloadSheet::Source {
+					t.id, t.title, t.fields.join (", "), runAge (t.run),
+					tiles->covers (t, x0, y0, x1, y1), true, false };
+			sheet->setSources (src);
+			sheet->setWeigher ([this](const QString &id, int d) -> qint64 {
+				double a, b, c, e;
+				visibleArea (&a, &b, &c, &e);
+				if (id == QLatin1String("noaa"))
+					return noaaGuess (a, b, c, e, d, sheet->hourStep());
+				for (DwdTiles::Set &t : tiles->sets())
+					if (t.id == id)
+						return tiles->weigh (t, a, b, c, e, d);
+				return 0;
+			});
+			sheet->setDepth (days->value(), step->value());
+			say (QString(), false);
+
+			sheet->setGeometry (rect());
+			sheet->show ();
+			sheet->raise ();
+		}
+
+	private:
+		// Область — то, что сейчас на экране. Ничего выделять не надо:
+		// на телефоне это и есть самый естественный выбор.
+		void visibleArea (double *x0, double *y0, double *x1, double *y1)
+		{
+			map->projection()->getVisibleArea (x0, y0, x1, y1);
+			if (*x0 > *x1) std::swap (*x0, *x1);
+			if (*y0 > *y1) std::swap (*y0, *y1);
+		}
+
+		// Сколько прошло с выпуска. Свежесть важнее подробности: вчерашний
+		// прогноз с шагом сетки в семь километров хуже сегодняшнего с
+		// двадцатью пятью.
+		static QString runAge (const QString &run)
+		{
+			QDateTime t = QDateTime::fromString (run, Qt::ISODate);
+			if (!t.isValid())
+				return QString();
+			qint64 h = t.secsTo (QDateTime::currentDateTimeUtc()) / 3600;
+			if (h < 1)
+				return tr("только что");
+			return tr("выпуск %n ч назад", "", (int) h);
+		}
+
+		// У NOAA веса заранее не узнать: они режут у себя и длину не
+		// сообщают. Считаем по числу точек, полей и сроков, а множитель
+		// поправляем по тому, сколько пришло в прошлый раз, — так оценка
+		// со временем становится верной для здешних широт и полей.
+		qint64 noaaGuess (double x0, double y0, double x1, double y1,
+		                  int d, int h) const
+		{
+			double pts = noaaPoints (x0, y0, x1, y1);
+			int steps = d*24 / qMax (1, h) + 1;
+			double k = Settings::getUserSetting ("noaaBytesPerValue", 0.55)
+			               .toDouble();
+			return (qint64) (pts * steps * NOAA_FIELDS * k);
+		}
+
+		static double noaaPoints (double x0, double y0, double x1, double y1)
+		{
+			return ((x1-x0)/0.25 + 1) * ((y1-y0)/0.25 + 1);
+		}
+
+		void startDownload (const QStringList &pick, int d, int h)
+		{
+			double x0, y0, x1, y1;
+			visibleArea (&x0, &y0, &x1, &y1);
 
 			load->setEnabled (false);
 			bar->show ();
 			BarProgress pr (bar, [this](const QString &t) { say (t, false); });
 			QByteArray data;
-			QDateTime t0 = QDateTime::currentDateTime ();
 			QStringList trouble;
 
-			for (const char *model : {"gfs_p25_", "ww3_p50_"}) {
-				ForecastSource *src = SourceRegistry::instance().sourceFor (model);
-				if (src == nullptr)
-					continue;
-				ForecastSource::Request rq {model, x0, y0, x1, y1,
-				                            days->value(), step->value()};
-				ForecastSource::Result r = src->fetch (rq, &data, &pr);
-				if (!r.ok)
-					trouble << r.error;
+			if (pick.contains (QLatin1String("noaa"))) {
+				for (const char *model : {"gfs_p25_", "ww3_p50_"}) {
+					ForecastSource *src =
+					    SourceRegistry::instance().sourceFor (model);
+					if (src == nullptr)
+						continue;
+					ForecastSource::Request rq {model, x0, y0, x1, y1, d, h};
+					ForecastSource::Result r = src->fetch (rq, &data, &pr);
+					if (!r.ok)
+						trouble << r.error;
+				}
+				// Множитель оценки — по тому, что пришло на самом деле.
+				if (data.size() > 100) {
+					double pts = noaaPoints (x0, y0, x1, y1);
+					int steps = d*24 / qMax (1, h) + 1;
+					double k = data.size() / (pts * steps * NOAA_FIELDS);
+					if (k > 0.05 && k < 5.0)
+						Settings::setUserSetting ("noaaBytesPerValue", k);
+				}
+				// Волнение для замкнутых морей — поверх того, что дал NOAA:
+				// на Каспии у них нет ни одной точки волнения.
+				if (data.size() > 100 && data.startsWith ("GRIB"))
+					addWaves (x0, y0, x1, y1, &data, pr);
 			}
 
-			// Волнение для замкнутых морей — поверх того, что дал NOAA.
-			if (data.size() > 100 && data.startsWith ("GRIB"))
-				addWaves (x0, y0, x1, y1, &data, pr);
+			if (tiles != nullptr)
+				for (DwdTiles::Set &t : tiles->sets()) {
+					if (!pick.contains (t.id))
+						continue;
+					pr.message (t.title);
+					int got = tiles->fetch (t, x0, y0, x1, y1, d, &data,
+					    [&pr](int done, int all, qint64 bytes) {
+					        pr.step (done, all, bytes);
+					    });
+					if (got == 0)
+						trouble << tr("%1: не далась").arg (t.title);
+				}
 
 			bool ok = false;
 			if (data.size() > 100 && data.startsWith ("GRIB")) {
@@ -974,7 +1116,8 @@ class Main : public QWidget
 					if (map->setForecast (tmp)) {
 						map->setForecast (QString());
 						QFile::remove (path);
-						ok = QFile::rename (tmp, path) && map->setForecast (path);
+						ok = QFile::rename (tmp, path)
+						  && map->setForecast (path);
 					}
 				}
 				QFile::remove (tmp);
@@ -996,6 +1139,7 @@ class Main : public QWidget
 			}
 		}
 
+	private slots:
 		// Прогноз без даты опаснее, чем никакого: вчерашний ветер
 		// выглядит на карте точно так же, как сегодняшний.
 		void showStamp ()
@@ -1230,6 +1374,9 @@ class Main : public QWidget
 		IconButton   *locate;
 		IconButton   *update;
 		QNetworkAccessManager *net = nullptr;
+		// Немецкие плитки и окно выбора прогноза.
+		DwdTiles      *tiles = nullptr;
+		DownloadSheet *sheet = nullptr;
 		QString       newVersionUrl;
 		QGeoPositionInfoSource *gps = nullptr;
 		QTimer        viewSave;      // отложенная запись вида
