@@ -1,0 +1,42 @@
+# Волнение для Каспия, Чёрного и Азовского морей.
+#
+# У NOAA этих морей в волновой модели нет вовсе — проверено замером.
+# У немецкой службы погоды (DWD) они есть, но она не умеет отдавать
+# кусок по области: файлы глобальные. Поэтому кто-то должен резать.
+# Этот «кто-то» — задание здесь: своего сервера заводить не пришлось.
+name: Волнение из DWD
+
+on:
+  schedule:
+    # Выпуски GWAM выходят в 00 и 12 UTC, выкладываются часа через три.
+    - cron: '30 4,16 * * *'
+  workflow_dispatch:        # и вручную, кнопкой
+
+permissions:
+  contents: write           # чтобы положить готовые файлы в выпуск
+
+jobs:
+  cut:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Инструменты для GRIB
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq cdo libeccodes-tools
+
+      - name: Забрать у DWD и нарезать
+        run: bash tools/waves-cut.sh
+
+      - name: Выложить в выпуск «waves»
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Выпуск с постоянной меткой: ссылка на файлы не меняется,
+          # приложению не нужно ничего искать.
+          gh release view waves >/dev/null 2>&1 || \
+            gh release create waves --title "Волнение (обновляется)" \
+              --notes "Волнение для замкнутых морей из модели DWD GWAM. Файлы обновляются дважды в сутки."
+          gh release upload waves out/*.grb2 out/waves.json --clobber
