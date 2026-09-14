@@ -1,0 +1,7 @@
+{
+  "versionCode": 120,
+  "versionName": "1.2.0",
+  "page": "https://github.com/sermakarkz/MAKGrib/releases/latest",
+  "arm64": "https://github.com/sermakarkz/MAKGrib/releases/download/v1.2.0/MAKGrib-1.2.0-arm64-v8a.apk",
+  "arm":   "https://github.com/sermakarkz/MAKGrib/releases/download/v1.2.0/MAKGrib-1.2.0-armeabi-v7a.apk"
+}

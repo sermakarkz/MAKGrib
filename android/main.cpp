@@ -13,7 +13,14 @@ MAKGrib для Android.
 #include <QDir>
 #include <QEvent>
 #include <QFont>
+#include <QDesktopServices>
 #include <QGeoPositionInfoSource>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
+#include <QSysInfo>
 #include <QLocale>
 #include <QTranslator>
 #include <QPermissions>
@@ -160,6 +167,16 @@ class Main : public QWidget
 			    "border-top-right-radius: 12px;"
 			    "border-bottom-right-radius: 12px;");
 			connect (tab, &QPushButton::clicked, this, &Main::toggleLayers);
+
+			// Кнопка появляется, только когда вышла версия новее.
+			update = new IconButton (IconButton::Download, false, map);
+			update->setFixedSize (52, 52);
+			update->setRound (true);
+			update->hide ();
+			connect (update, &QPushButton::clicked, this, [this]() {
+				if (!newVersionUrl.isEmpty())
+					QDesktopServices::openUrl (QUrl (newVersionUrl));
+			});
 
 			// Круглая кнопка «моё место» поверх карты. Появляется сразу,
 			// но работает, когда GPS даст первое место.
@@ -430,6 +447,7 @@ class Main : public QWidget
 			Settings::setUserSetting ("windArrowsColorForced", "#141414");
 			map->loadMaps ();
 			restoreView ();
+			checkUpdate ();
 			startGps ();
 			loadRoute ();
 			openLast ();
@@ -722,6 +740,47 @@ class Main : public QWidget
 				return;                      // первый запуск — вид по умолчанию
 			map->setView (lo.toDouble(), la.toDouble(), sc.toDouble());
 			viewKnown = true;
+		}
+
+		// Проверка обновлений: раз в сутки смотрим страничку с номером
+		// последней версии. Магазина у нас пока нет, а обновляться людям
+		// надо — иначе они останутся со сборкой, которую поставили в
+		// первый день.
+		void checkUpdate ()
+		{
+			qint64 now  = QDateTime::currentSecsSinceEpoch ();
+			qint64 last = Settings::getUserSetting ("updateChecked", 0)
+			                  .toLongLong();
+			if (now - last < 24*3600)
+				return;
+			Settings::setUserSetting ("updateChecked", QString::number (now));
+
+			if (net == nullptr)
+				net = new QNetworkAccessManager (this);
+			QNetworkRequest rq (QUrl (
+			    "https://sermakarkz.github.io/MAKGrib/latest.json"));
+			rq.setTransferTimeout (15000);
+			QNetworkReply *r = net->get (rq);
+			connect (r, &QNetworkReply::finished, this, [this, r]() {
+				r->deleteLater ();
+				if (r->error() != QNetworkReply::NoError)
+					return;                  // связи нет — не беда
+				QJsonObject o = QJsonDocument::fromJson (r->readAll()).object();
+				int have = MAKGRIB_VERSION_CODE;
+				int out  = o.value("versionCode").toInt();
+				if (out <= have)
+					return;
+				// Своя архитектура: 32-битным телефонам нужна своя сборка.
+				QString abi = QSysInfo::buildCpuArchitecture().startsWith("arm64")
+				              ? "arm64" : "arm";
+				newVersionUrl = o.value(abi).toString();
+				if (newVersionUrl.isEmpty())
+					newVersionUrl = o.value("page").toString();
+				update->show ();
+				placeOwnButton ();
+				say (tr("Вышла версия %1 — нажмите стрелку, чтобы скачать")
+				         .arg (o.value("versionName").toString()), false);
+			});
 		}
 
 		void showInfo ()
@@ -1027,6 +1086,8 @@ class Main : public QWidget
 		{
 			locate->move (map->width() - 52 - 14, map->height() - 52 - 14);
 			locate->raise ();
+			update->move (map->width() - 52 - 14, map->height() - 2*52 - 26);
+			update->raise ();
 		}
 
 		void placeLayers ()
@@ -1107,6 +1168,9 @@ class Main : public QWidget
 		ScaleBar     *scale;
 		QPushButton  *tab;
 		IconButton   *locate;
+		IconButton   *update;
+		QNetworkAccessManager *net = nullptr;
+		QString       newVersionUrl;
 		QGeoPositionInfoSource *gps = nullptr;
 		QTimer        viewSave;      // отложенная запись вида
 		bool          viewKnown = false;

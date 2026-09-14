@@ -16,8 +16,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="org.makgrib.app"
     android:installLocation="auto"
-    android:versionCode="110"
-    android:versionName="1.1.0">
+    android:versionCode="120"
+    android:versionName="1.2.0">
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"  />
     <uses-permission android:name="android.permission.INTERNET"  />
     <!-- Своё место на карте. Грубое разрешение идёт следом за точным:
