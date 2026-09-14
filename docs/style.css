@@ -1,0 +1,37 @@
+/* Общий вид страниц проекта: цвета сняты со значка — море и ветер. */
+:root {
+  --sea: #123f66; --deep: #08243d; --ink: #1a2a3a; --paper: #f4f7fa;
+  --wind: #ff8a3d; --line: #d2dfec;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--paper); color: var(--ink);
+  font: 17px/1.65 -apple-system, "Segoe UI", Roboto, "Liberation Sans", sans-serif;
+}
+header {
+  background: linear-gradient(180deg, var(--sea), var(--deep));
+  color: #fff; padding: 42px 20px 34px;
+}
+header .in, main { max-width: 760px; margin: 0 auto; }
+header h1 { margin: 0 0 6px; font-size: 34px; letter-spacing: .5px; }
+header p { margin: 0; opacity: .85; }
+main { padding: 28px 20px 60px; }
+h2 { margin: 34px 0 10px; font-size: 22px; }
+h3 { margin: 24px 0 6px; font-size: 18px; }
+a { color: #1d6fb8; }
+code { background: #e7eef5; padding: 1px 5px; border-radius: 4px; font-size: 15px; }
+.note {
+  border-left: 4px solid var(--wind); background: #fff6ef;
+  padding: 12px 16px; margin: 18px 0; border-radius: 0 8px 8px 0;
+}
+.dl { display: flex; flex-wrap: wrap; gap: 10px; margin: 18px 0 6px; }
+.dl a {
+  display: block; padding: 12px 18px; background: var(--sea); color: #fff;
+  text-decoration: none; border-radius: 10px; font-weight: 600;
+}
+table { border-collapse: collapse; width: 100%; margin: 14px 0; }
+td, th { border-bottom: 1px solid var(--line); padding: 8px 6px; text-align: left; }
+footer {
+  border-top: 1px solid var(--line); margin-top: 40px; padding-top: 18px;
+  font-size: 15px; color: #5a6b7c;
+}

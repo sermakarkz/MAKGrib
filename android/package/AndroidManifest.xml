@@ -1,5 +1,10 @@
 <?xml version="1.0"?>
 <!--
+    Имя пакета org.makgrib.app задано здесь и после первой публикации в
+    магазине не меняется никогда. Прежнее, org.qtproject.example.MAKGrib,
+    было заготовкой Qt: со словом example внутри приложение так бы и
+    осталось навсегда.
+
     Свой манифест нужен ради одной строки: android:screenOrientation="portrait".
     Экран заблокирован по вертикали намеренно — лёжа телефон в рубке держать
     неудобно, а карта и панель рассчитаны на высокий экран.
@@ -9,7 +14,7 @@
     отдельных объяснений.
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="org.qtproject.example.MAKGrib"
+    package="org.makgrib.app"
     android:installLocation="auto"
     android:versionCode="110"
     android:versionName="1.1.0">
