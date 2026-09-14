@@ -624,6 +624,23 @@ void MapView::setCenter (double lon, double lat)
 }
 
 //---------------------------------------------------------------------
+void MapView::setView (double lon, double lat, double sc)
+{
+	if (sc > 0)
+		proj->setScale (sc);
+	proj->setMapPointInScreen (lon, lat, width()/2, height()/2);
+	bufferValid = false;
+	announce ();
+	update ();
+}
+
+//---------------------------------------------------------------------
+double MapView::scale () const
+{
+	return proj->getScale ();
+}
+
+//---------------------------------------------------------------------
 void MapView::zoomBy (double factor)
 {
 	proj->setScale (proj->getScale() * factor);
