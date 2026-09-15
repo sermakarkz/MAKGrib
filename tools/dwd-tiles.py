@@ -82,8 +82,9 @@ SETS = {
                   ("vmax_10m","VMAX_10M"), ("pmsl","PMSL")],
         fields = ["ветер", "порывы", "давление"],
         tile   = 5,
+        hours  = 120,          # докуда считает сама модель
         area   = (-23.5, 62.5, 29.5, 70.5),
-        probe  = ("v_10m", r"single-level_(\d{8})\d{2}_000_V_10M"),
+        probe  = ("v_10m", r"single-level_(\d{8})\d{2}_{step}_V_10M"),
     ),
     "eu-wave": dict (
         title  = "Волнение EWAM, 5 км",
@@ -100,8 +101,9 @@ SETS = {
                   ("shts","SHTS"), ("mdts","MDTS")],
         fields = ["волнение", "зыбь"],
         tile   = 5,
+        hours  = 78,           # EWAM дальше не считает — всего 3 с четвертью суток
         area   = (-10.5, 42.0, 30.0, 66.0),
-        probe  = ("swh", r"EWAM_SWH_(\d{8})\d{2}_000"),
+        probe  = ("swh", r"EWAM_SWH_(\d{8})\d{2}_{step}"),
     ),
     "world-wave": dict (
         title  = "Волнение GWAM, 0.25°",
@@ -115,8 +117,9 @@ SETS = {
                   ("shts","SHTS"), ("mdts","MDTS")],
         fields = ["волнение", "зыбь"],
         tile   = 20,
+        hours  = 174,
         area   = (-180.0, 180.0, -78.0, 84.0),
-        probe  = ("swh", r"GWAM_SWH_(\d{8})\d{2}_000"),
+        probe  = ("swh", r"GWAM_SWH_(\d{8})\d{2}_{step}"),
     ),
     "world-wind": dict (
         title  = "Ветер ICON, 13 км",
@@ -128,8 +131,9 @@ SETS = {
         params = [("u_10m","U_10M"), ("v_10m","V_10M"), ("pmsl","PMSL")],
         fields = ["ветер", "давление"],
         tile   = 20,
+        hours  = 180,
         area   = (-180.0, 180.0, -90.0, 90.0),
-        probe  = ("v_10m", r"single-level_(\d{8})\d{2}_000_V_10M"),
+        probe  = ("v_10m", r"single-level_(\d{8})\d{2}_{step}_V_10M"),
         # Глобальная ICON лежит на икосаэдре, обычной сетки у неё нет.
         # DWD выкладывает готовые веса, перекладка — одна команда cdo.
         regrid = "ICON_GLOBAL2WORLD_025_EASY",
@@ -161,10 +165,15 @@ def fetch (url, dest, tries=3):
 
 
 def latest_run (base, probe_dir, pattern, runs):
-    """Самый свежий выпуск — по тому, что лежит в каталоге.
+    """Самый свежий выпуск, выложенный целиком.
 
     По часам гадать нельзя: выкладывают с задержкой, да и часы машины
-    могут уйти вперёд относительно сервера.
+    могут уйти вперёд относительно сервера. Но мало найти выпуск — надо
+    убедиться, что он доложен до конца: DWD выкладывает срок за сроком
+    часа два, и если хвататься за нулевой срок, достанется огрызок.
+    Проверено на своей шкуре: взяли прогон 00 UTC, у которого было
+    готово пятнадцать часов вперёд, и молча нарезали шесть сроков вместо
+    сорока. Поэтому ищем по последнему нужному сроку.
     """
     best = None
     for c in runs:
@@ -324,8 +333,17 @@ def build (name, spec):
         log ("  нет cdo — набор пропущен")
         return None
 
+    # Сколько просим и сколько модель может — берём меньшее. У EWAM это
+    # 78 часов, и просить у неё пять суток бессмысленно: она бы просто
+    # не нашлась, а прежде отдавала бы огрызок молча.
+    last  = min (DAYS*24, spec["hours"])
+    steps = list (range (0, last + 1, STEP_HOURS))
     probe_dir, probe_pat = spec["probe"]
-    run = latest_run (spec["base"], probe_dir, probe_pat, spec["runs"])
+    # Не format: в самом образце есть \d{8}, и подстановка по фигурным
+    # скобкам принимает восьмёрку за номер поля.
+    run = latest_run (spec["base"], probe_dir,
+                      probe_pat.replace ("{step}", f"{steps[-1]:03d}"),
+                      spec["runs"])
     if run is None:
         log ("  свежего выпуска не нашлось")
         return None
@@ -343,7 +361,6 @@ def build (name, spec):
                     and t[0] + size > aS and t[0] < aN)
     log (f"  квадратов с морем в области: {len(tiles)}")
 
-    steps = list (range (0, DAYS*24, STEP_HOURS))
     made  = {}                                   # плитка -> [байты по суткам]
 
     def path_for (la0, lo0):
@@ -356,6 +373,7 @@ def build (name, spec):
             os.remove (p)
 
     t0 = time.time()
+    missed = []
     for step in steps:
         # Скачиваем поля одного срока разом: сеть тут узкое место.
         def get (pp):
@@ -367,6 +385,8 @@ def build (name, spec):
         with ThreadPoolExecutor (max_workers=JOBS) as pool:
             files = list (pool.map (get, spec["params"]))
 
+        if any (f is None for f in files):
+            missed.append (step)
         for src in files:
             if src is None:
                 continue
@@ -383,6 +403,9 @@ def build (name, spec):
     # Опись: точный размер каждого файла. По ней приложение скажет
     # человеку, во сколько мегабайт обойдётся загрузка, ещё до того как
     # он её начнёт — у большинства связь в роуминге или спутниковая.
+    if missed:
+        log (f"  ВНИМАНИЕ: нет данных на сроки {missed} — "
+             f"выпуск неполон, {len(missed)} из {len(steps)}")
     sizes = {}
     total = 0
     for (la0, lo0) in tiles:
@@ -397,7 +420,7 @@ def build (name, spec):
         sizes[tile_key (lo0, la0)] = [n]
         total += n
     log (f"  плиток вышло: {len(sizes)}, всего {total/1048576:.1f} МБ, "
-         f"{time.time()-t0:.0f} с")
+         f"глубина {last} ч, сроков {len(steps)}, {time.time()-t0:.0f} с")
 
     index = f"files-{name}.json"
     with open (os.path.join (OUT, index), "w") as f:
@@ -406,8 +429,10 @@ def build (name, spec):
 
     return dict (id=name, title=spec["title"], model=spec["model"],
                  kind=spec["kind"], fields=spec["fields"],
-                 run=iso (d, c), tile=size, days=DAYS,
-                 hours=DAYS*24, interval=STEP_HOURS,
+                 run=iso (d, c), tile=size,
+                 # Глубина настоящая, а не заказанная: приложение по ней
+                 # подписывает источник, и завышать её нельзя.
+                 days=last//24, hours=last, interval=STEP_HOURS,
                  # Границы набора — чтобы приложение могло сказать «этого
                  # источника в вашем районе нет», не скачивая опись целиком.
                  west=aW, east=aE, south=aS, north=aN,
