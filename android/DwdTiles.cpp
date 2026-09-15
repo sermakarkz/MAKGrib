@@ -132,10 +132,35 @@ QString DwdTiles::key (double lon, double lat, int tile)
 }
 
 //-------------------------------------------------------------------------
+// Долгота, приведённая к обычному виду: [-180, 180).
+//
+// Карта долготу не нормирует — она копит её при прокрутке, и экран на
+// 180-м меридиане приходит как 175..185, а после долгого хода на восток
+// и вовсе как 350..370. Плитки же названы по долготе в обычном виде.
+// Без приведения приложение спрашивало бы «E180» там, где лежит «W180»,
+// и половина экрана оставалась бы пустой — как раз на Чукотке и в
+// Беринговом проливе.
+static double wrapLon (double lon)
+{
+	while (lon >= 180.0)  lon -= 360.0;
+	while (lon < -180.0)  lon += 360.0;
+	return lon;
+}
+
+//-------------------------------------------------------------------------
 bool DwdTiles::covers (const Set &s, double x0, double y0,
                        double x1, double y1) const
 {
-	return !(x1 < s.west || x0 > s.east || y1 < s.south || y0 > s.north);
+	if (y1 < s.south || y0 > s.north)
+		return false;
+	// Участок мог достаться со сдвигом на целые обороты, а то и
+	// перехлёстывать 180-й меридиан. Смотрим и сам прямоугольник, и его
+	// двойник через оборот: хоть один да ляжет на область набора.
+	double a = wrapLon (x0);
+	double b = a + (x1 - x0);
+	if (!(b < s.west || a > s.east))
+		return true;
+	return !(b - 360.0 < s.west || a - 360.0 > s.east);
 }
 
 //-------------------------------------------------------------------------
@@ -145,11 +170,16 @@ QList<QString> DwdTiles::tilesFor (const Set &s, double x0, double y0,
 	QList<QString> out;
 	if (s.tile <= 0)
 		return out;
-	double lo0 = std::floor (x0 / s.tile) * s.tile;
+	// Считаем от приведённой долготы, а дальше идём с шагом плитки:
+	// если участок перехлёстывает 180-й меридиан, следующий квадрат за
+	// 175° это -180°, и приведение на каждом шаге это учитывает.
+	const double west = wrapLon (x0);
+	const double span = std::min (360.0, x1 - x0);
+	double lo0 = std::floor (west / s.tile) * s.tile;
 	double la0 = std::floor (y0 / s.tile) * s.tile;
 	for (double la = la0; la <= y1; la += s.tile)
-		for (double lo = lo0; lo <= x1; lo += s.tile) {
-			QString k = key (lo, la, s.tile);
+		for (double lo = lo0; lo <= west + span; lo += s.tile) {
+			QString k = key (wrapLon (lo), la, s.tile);
 			// Квадратов без воды не нарезают вовсе: над Сахарой ветер
 			// есть, а смысла в нём нет.
 			if (s.sizes.contains (k) && !out.contains (k))
