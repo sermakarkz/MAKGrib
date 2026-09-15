@@ -987,10 +987,19 @@ class Main : public QWidget
 				QStringLiteral("noaa"), tr("NOAA GFS, 25 км"),
 				tr("ветер, давление, температура, осадки"),
 				QString(), true, false, true };
-			for (const DwdTiles::Set &t : tiles->sets())
+			for (const DwdTiles::Set &t : tiles->sets()) {
+				// Немецкие плитки приходят на всю глубину одним куском:
+				// делить их по суткам пробовали, но GitHub отбивает
+				// полторы тысячи загрузок подряд. Значит колесо глубины
+				// на их вес не влияет, и молчать об этом нельзя —
+				// человек по весу решает, качать ли.
+				QString about = t.fields.join (", ");
+				if (t.days > 0)
+					about += tr(" · %n сут целиком", "", t.days);
 				src << DownloadSheet::Source {
-					t.id, t.title, t.fields.join (", "), runAge (t.run),
+					t.id, t.title, about, runAge (t.run),
 					tiles->covers (t, x0, y0, x1, y1), true, false };
+			}
 			sheet->setSources (src);
 			sheet->setWeigher ([this](const QString &id, int d) -> qint64 {
 				double a, b, c, e;
