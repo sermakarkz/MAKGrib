@@ -12,6 +12,13 @@
 каждой, чтобы файлы у всех наборов вышли сопоставимыми: 5° на европейской
 сетке 0.0625° и 20° на мировой 0.25°.
 
+Почему один файл на плитку, а не по файлу на сутки. Делить по суткам
+было бы честнее: моряк платил бы за то, что взял. Пробовали — не вышло,
+и упёрлось не в объём, а в число файлов: GitHub на полутора тысячах
+загрузок подряд отвечает «secondary rate limit» через сорок восемь
+секунд. Причём замена файла — это два обращения, удаление и заливка. При
+одном файле на плитку их триста семьдесят, и это проходит.
+
 Что готовится:
     eu-wind     ICON-EU, 7 км — ветер, порывы и давление по Европе
     eu-wave     EWAM, 5 км    — волнение и зыбь; на восток только до 42°
@@ -339,19 +346,17 @@ def build (name, spec):
     steps = list (range (0, DAYS*24, STEP_HOURS))
     made  = {}                                   # плитка -> [байты по суткам]
 
-    def path_for (la0, lo0, day):
-        return os.path.join (OUT, f"{name}_{tile_key(lo0,la0)}_d{day}.grb2")
+    def path_for (la0, lo0):
+        return os.path.join (OUT, f"{name}_{tile_key(lo0,la0)}.grb2")
 
     # Старые куски убрать: дописываем в конец, второй прогон удвоил бы.
     for (la0, lo0) in tiles:
-        for day in range (1, DAYS+1):
-            p = path_for (la0, lo0, day)
-            if os.path.exists (p):
-                os.remove (p)
+        p = path_for (la0, lo0)
+        if os.path.exists (p):
+            os.remove (p)
 
     t0 = time.time()
     for step in steps:
-        day = min (DAYS, step//24 + 1)
         # Скачиваем поля одного срока разом: сеть тут узкое место.
         def get (pp):
             p, P = pp
@@ -370,8 +375,7 @@ def build (name, spec):
                 if not regrid (src, out, weights):
                     os.remove (src); continue
                 os.remove (src); src = out
-            slice_field (src, tiles, size,
-                         lambda la, lo, day=day: path_for (la, lo, day))
+            slice_field (src, tiles, size, path_for)
             os.remove (src)
         if step % 24 == 0:
             log (f"  срок {step:3d} ч  ({time.time()-t0:.0f} с)")
@@ -382,14 +386,16 @@ def build (name, spec):
     sizes = {}
     total = 0
     for (la0, lo0) in tiles:
-        key = tile_key (lo0, la0)
-        row = []
-        for day in range (1, DAYS+1):
-            p = path_for (la0, lo0, day)
-            n = os.path.getsize (p) if os.path.exists (p) else 0
-            row.append (n); total += n
-        if any (row):
-            sizes[key] = row
+        p = path_for (la0, lo0)
+        if not os.path.exists (p):
+            continue
+        n = os.path.getsize (p)
+        # Список из одного числа, а не просто число: прежде тут лежал
+        # размер по суткам, и приложение умеет складывать столько первых,
+        # сколько суток попросили. Форму сохраняем — вдруг делить по
+        # срокам когда-нибудь снова станет можно.
+        sizes[tile_key (lo0, la0)] = [n]
+        total += n
     log (f"  плиток вышло: {len(sizes)}, всего {total/1048576:.1f} МБ, "
          f"{time.time()-t0:.0f} с")
 
