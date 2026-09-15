@@ -74,6 +74,7 @@ bool DwdTiles::refresh (bool force)
 		s.north    = o.value ("north").toDouble();
 		s.tile     = o.value ("tile").toInt();
 		s.days     = o.value ("days").toInt();
+		s.hours    = o.value ("hours").toInt();
 		s.interval = o.value ("interval").toInt();
 		s.index    = o.value ("index").toString();
 		for (const QJsonValue &f : o.value ("fields").toArray())

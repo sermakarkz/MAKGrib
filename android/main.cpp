@@ -994,8 +994,13 @@ class Main : public QWidget
 				// на их вес не влияет, и молчать об этом нельзя —
 				// человек по весу решает, качать ли.
 				QString about = t.fields.join (", ");
-				if (t.days > 0)
-					about += tr(" · %n сут целиком", "", t.days);
+				// Глубина у каждой модели своя: EWAM считает 78 часов,
+				// а не пять суток, и округлять это до «3 сут» нечестно —
+				// человек планирует переход по этой цифре.
+				if (t.hours > 0 && t.hours % 24 == 0)
+					about += tr(" · %n сут целиком", "", t.hours / 24);
+				else if (t.hours > 0)
+					about += tr(" · %n ч целиком", "", t.hours);
 				src << DownloadSheet::Source {
 					t.id, t.title, about, runAge (t.run),
 					tiles->covers (t, x0, y0, x1, y1), true, false };
