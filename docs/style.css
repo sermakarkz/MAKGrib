@@ -42,3 +42,9 @@ main img {
   display: block; margin: 8px auto; max-width: 280px; width: 100%;
   border: 1px solid var(--line); border-radius: 14px;
 }
+
+/* Перечни ведём тире, а не кружком: кружок с клавиатуры не набрать, и в
+   русской типографике список принято открывать тире. */
+main ul { padding-left: 0; list-style: none; }
+main ul > li { padding-left: 20px; position: relative; margin-bottom: 6px; }
+main ul > li::before { content: "—"; position: absolute; left: 0; color: #5a6b7c; }
