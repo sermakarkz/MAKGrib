@@ -128,6 +128,21 @@ else
   echo "    сделать: python3 tests/maketiles.py"
 fi
 
+# Имена плиток по обе стороны договора: приложение считает их само, а
+# файлы именует нарезалка. Разойдутся — приложение будет просить то,
+# чего нет, и молча показывать «в этом районе пусто».
+cd "$SRC/build/src"
+/usr/bin/c++ -std=gnu++17 -isysroot "$SDK" -isystem "$SDK/usr/include/c++/v1" -arch arm64 \
+  -I"$SRC/android" -F"$QT/lib" \
+  -I"$QT/lib/QtCore.framework/Headers" -I"$QT/lib/QtNetwork.framework/Headers" \
+  "$SRC/tests/keytest.cpp" "$SRC/android/DwdTiles.cpp" \
+  -framework QtCore -framework QtNetwork -o "$SRC/build/keytest"
+cd "$SRC"
+echo
+echo "=== Имена плиток прогноза ==="
+LC_ALL=C "$SRC/build/keytest" | LC_ALL=C python3 "$SRC/tests/keytest.py"
+KEYS=${PIPESTATUS[1]}
+
 # Год для даты выхода: Qt здесь не нужен, правило чистое.
 echo
 echo "=== Год маршрута через Новый год ==="
@@ -135,4 +150,4 @@ c++ -std=c++17 -o "$SRC/build/routetest" "$SRC/tests/routetest.cpp"
 "$SRC/build/routetest"
 ROUTE=$?
 
-exit $(( BOAT + MERC + TILE + ROUTE ))
+exit $(( BOAT + MERC + TILE + KEYS + ROUTE ))
