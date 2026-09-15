@@ -2,14 +2,14 @@
 <html lang="ru">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>MAKGrib — GRIB на телефоне: прогноз ветра и волнения для моря</title>
-<meta name="description" content="Бесплатное приложение для просмотра морских прогнозов GRIB на Android, Windows, Linux и macOS: ветер, порывы, волнение, давление, температура воды. Работает без интернета, без подписки и регистрации. XyGrib на телефоне.">
+<title>Погода для моряков: карта ветра и волнения на телефоне — MAKGrib</title>
+<meta name="description" content="Погода для моряков: карта ветра, волнения и давления на телефоне и компьютере. Бесплатная программа для морских прогнозов GRIB — Android, Windows, Linux, macOS. Работает без интернета, без подписки и регистрации. XyGrib на телефоне.">
 <link rel="canonical" href="https://sermakarkz.github.io/MAKGrib/">
 <link rel="alternate" hreflang="ru" href="https://sermakarkz.github.io/MAKGrib/">
 <link rel="alternate" hreflang="en" href="https://sermakarkz.github.io/MAKGrib/index-en.html">
 <link rel="alternate" hreflang="x-default" href="https://sermakarkz.github.io/MAKGrib/">
-<meta property="og:title" content="MAKGrib — GRIB на телефоне: прогноз ветра и волнения">
-<meta property="og:description" content="Морские прогнозы на Android и компьютере. Бесплатно, без подписки, работает без интернета.">
+<meta property="og:title" content="Погода для моряков: карта ветра и волнения на телефоне">
+<meta property="og:description" content="Карта погоды для моряков на Android и компьютере. Бесплатно, без подписки, работает без интернета.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://sermakarkz.github.io/MAKGrib/">
 <meta property="og:image" content="https://sermakarkz.github.io/MAKGrib/img/route.png">
@@ -22,7 +22,7 @@
   "name": "MAKGrib",
   "applicationCategory": "TravelApplication",
   "operatingSystem": "Android 9+, Windows, Linux, macOS",
-  "description": "Просмотр морских прогнозов погоды в формате GRIB: ветер, порывы, волнение, давление, температура воды. Прокладка маршрута с расчётом времени прихода. Работает без интернета.",
+  "description": "Погода для моряков: карта ветра, волнения, давления и температуры воды в формате GRIB. Прокладка маршрута с расчётом времени прихода. Работает без интернета.",
   "url": "https://sermakarkz.github.io/MAKGrib/",
   "downloadUrl": "https://github.com/sermakarkz/MAKGrib/releases",
   "license": "https://www.gnu.org/licenses/gpl-3.0.html",
@@ -33,9 +33,10 @@
 </script>
 
 <header><div class="in">
-  <h1>MAKGrib — прогноз ветра и волнения на телефоне</h1>
-  <p>Морская погода в формате GRIB: на Android, Windows, Linux и macOS.
-     Бесплатно, без подписки и регистрации, работает без интернета.</p>
+  <h1>Погода для моряков — карта ветра и волнения на телефоне</h1>
+  <p>MAKGrib: морские прогнозы в формате GRIB на Android, Windows, Linux
+     и macOS. Бесплатно, без подписки и регистрации, работает без
+     интернета.</p>
 </div></header>
 
 <main>
@@ -101,12 +102,23 @@
   <table>
     <tr><th>Море</th><th>Ветер, давление, температура</th><th>Волнение</th></tr>
     <tr><td>Океаны, Средиземное, Северное, Балтика</td><td>есть</td><td>есть</td></tr>
-    <tr><td>Чёрное, Азовское, <b>Каспий</b></td><td>есть</td><td>пока нет</td></tr>
+    <tr><td>Чёрное, Азовское, <b>Каспий</b></td><td>есть</td><td>есть</td></tr>
+    <tr><td>Охотское, Японское, Берингово, Камчатка</td><td>есть</td><td>есть</td></tr>
   </table>
-  <p>Модель волнения NOAA не считает замкнутые бассейны — это её
-     свойство, а не недостаток программы. Волнение для Каспия, Чёрного и
-     Азовского морей будем брать у немецкой метеослужбы: их модель эти
-     моря покрывает, проверено.</p>
+  <p>Волновая модель NOAA замкнутые бассейны не считает — это её
+     свойство, а не недостаток программы: на Каспии у неё нет ни одной
+     точки волнения, проверено замером. Поэтому волнение для Каспия,
+     Чёрного и Азовского морей программа берёт у немецкой метеослужбы и
+     подкладывает в тот же файл. Человеку выбирать ничего не надо.</p>
+
+  <h3>Дальний Восток</h3>
+  <p>Охотское, Японское и Берингово моря, Курилы и Камчатка покрыты
+     полностью — и ветром, и волнением. Тем, кто работает в этих водах,
+     может пригодиться разбор
+     <a href="japan.html">японских факсимильных карт погоды</a>:
+     расписание передач JMH, частоты и расшифровка кодов ASAS, FSAS,
+     AWPN. Карта и GRIB друг друга не заменяют, но вместе дают полную
+     картину.</p>
 
   <h2>Чем отличается от Windy и других</h2>
   <p>Windy прекрасен, пока есть связь. В море её нет. MAKGrib держит
@@ -145,7 +157,9 @@
      32-битных.</p>
 
   <footer>
-    <p><a href="privacy.html">Политика конфиденциальности</a> ·
+    <p><a href="japan.html">Японские карты погоды</a> ·
+       <a href="xygrib.html">Не работает XyGrib?</a> ·
+       <a href="privacy.html">Политика конфиденциальности</a> ·
        <a href="index-en.html">English</a></p>
     <p>Свободная программа под лицензией GNU GPL версии 3, форк
        <a href="https://github.com/opengribs/XyGrib">XyGrib</a>.
@@ -161,7 +175,8 @@
     {"@type":"Question","name":"Сколько стоит MAKGrib?","acceptedAnswer":{"@type":"Answer","text":"Нисколько. Ни платных функций, ни подписки, ни рекламы."}},
     {"@type":"Question","name":"Нужен ли интернет для прогноза?","acceptedAnswer":{"@type":"Answer","text":"Только чтобы скачать прогноз. Дальше он хранится в телефоне и открывается без связи."}},
     {"@type":"Question","name":"Есть ли XyGrib для Android?","acceptedAnswer":{"@type":"Answer","text":"Официальной версии XyGrib для Android нет. MAKGrib — форк XyGrib с экраном, сделанным под телефон."}},
-    {"@type":"Question","name":"Показывает ли программа волнение на Каспии?","acceptedAnswer":{"@type":"Answer","text":"Пока нет: модель волнения NOAA не считает замкнутые бассейны. Ветер, давление и температура на Каспии есть."}}
+    {"@type":"Question","name":"Показывает ли программа волнение на Каспии?","acceptedAnswer":{"@type":"Answer","text":"Да. Волновая модель NOAA замкнутые бассейны не считает, поэтому волнение для Каспия, Чёрного и Азовского морей программа берёт у немецкой метеослужбы и подкладывает в тот же файл."}},
+    {"@type":"Question","name":"Где взять японские карты погоды для моряков?","acceptedAnswer":{"@type":"Answer","text":"Японская метеослужба передаёт факсимильные карты на частотах 3622,5, 7795 и 13988,5 кГц, позывной JMH Токио. Расписание передач и расшифровка кодов ASAS, FSAS, AWPN — на отдельной странице."}}
   ]
 }
 </script>
