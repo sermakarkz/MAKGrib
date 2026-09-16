@@ -7,6 +7,19 @@
 Форк [XyGrib](https://github.com/opengribs/XyGrib). Программа работает
 под Windows, Linux, macOS и Android.
 
+**Сайт проекта: [sermakarkz.github.io/MAKGrib](https://sermakarkz.github.io/MAKGrib/)** —
+описание, снимки экрана и ответы на частые вопросы.
+
+Разборы там же:
+
+— [Модели прогноза погоды](https://sermakarkz.github.io/MAKGrib/models.html) —
+  GFS, ECMWF, ICON, российская ПЛАВ и остальные: кто их считает, шаг
+  сетки, что бесплатно и на сколько суток можно верить.
+— [Японские карты погоды для моряков](https://sermakarkz.github.io/MAKGrib/japan.html) —
+  расписание передач JMH, частоты и расшифровка кодов.
+— [Не работает XyGrib?](https://sermakarkz.github.io/MAKGrib/xygrib.html) —
+  разбор причин и что делать.
+
 ## Чем отличается от XyGrib
 
 **Прогноз качается напрямую с NOAA.** Когда сервер OpenGribs лежит — а в
